@@ -1,3 +1,5 @@
+from bitrix_gateway import main
+
+
 def test_package_import() -> None:
-    import bitrix_gateway
-    assert 1 == 1
+    assert callable(main)
