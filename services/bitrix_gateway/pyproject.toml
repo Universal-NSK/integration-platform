@@ -7,7 +7,12 @@ authors = [
     { name = "EHoTuK1", email = "mhernov13102@gmail.com" }
 ]
 requires-python = ">=3.8"
-dependencies = []
+dependencies = [
+    "fastapi==0.115.0",
+    "httpx==0.28.1",
+    "pydantic==1.10.26",
+    "uvicorn==0.32.1",
+]
 
 [project.scripts]
 bitrix-gateway = "bitrix_gateway:main"
