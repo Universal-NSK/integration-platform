@@ -1,5 +1,6 @@
-import time
 import asyncio
+import time
+
 
 class RateLimiter:
     def __init__(self, min_interval: float) -> None:
@@ -11,8 +12,9 @@ class RateLimiter:
         self._last_start_ts = 0.0
 
     @property
-    def min_interval(self) -> float:
+    def get_min_interval(self) -> float:
         return self._min_interval
+
 
     async def wait_turn(self) -> None:
         async with self._lock:

@@ -10,7 +10,6 @@ def test_build_rate_limiter() -> None:
             }
         }
     )
-
     rate_limiter = build_rate_limiter(settings)
 
-    assert rate_limiter.min_interval == 0.5
+    assert rate_limiter.get_min_interval == 0.5
