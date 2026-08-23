@@ -15,7 +15,6 @@ class RateLimiter:
     def get_min_interval(self) -> float:
         return self._min_interval
 
-
     async def wait_turn(self) -> None:
         async with self._lock:
             now = time.monotonic()
