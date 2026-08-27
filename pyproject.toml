@@ -7,6 +7,7 @@ dependencies = []
 [tool.uv.workspace]
 members = [
     "services/bitrix_gateway",
+    "packages/runtime_files",
 ]
 
 [dependency-groups]
@@ -33,6 +34,7 @@ include = [
 
 extraPaths = [
     "services/bitrix_gateway/src",
+    "packages/runtime_files/src",
 ]
 
 exclude = [

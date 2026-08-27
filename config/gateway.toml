@@ -1,0 +1,22 @@
+[bitrix]
+request_timeout = 20.0
+
+[limits]
+min_interval = 0.55
+
+[execution]
+max_attempts = 5
+retry_delay = 5.0
+
+[queue]
+max_size = 5000
+
+[http]
+request_timeout = 150.0
+
+[server]
+host = "127.0.0.1"
+port = 8765
+
+[shutdown]
+grace_timeout = 30.0

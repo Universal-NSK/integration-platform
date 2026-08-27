@@ -1,0 +1,13 @@
+[project]
+name = "runtime-files"
+version = "0.1.0"
+description = "Add your description here"
+authors = [
+    { name = "EHoTuK1", email = "mhernov13102@gmail.com" }
+]
+requires-python = ">=3.8,<3.9"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
