@@ -34,6 +34,20 @@ def test_program_data_file_uses_explicit_root(
     assert result == (program_data_root / "bitrix.secrets.toml")
 
 
+def test_program_data_dir_uses_explicit_root(
+    tmp_path: Path,
+) -> None:
+    program_data_root = tmp_path / "Universal" / "IntegrationPlatform"
+    paths = RuntimePaths(
+        repo_root=tmp_path / "repository",
+        program_data_root=program_data_root,
+    )
+
+    result = paths.program_data_dir("logs")
+
+    assert result == (program_data_root / "logs")
+
+
 def test_program_data_file_uses_windows_programdata(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -84,3 +98,27 @@ def test_file_name_must_not_be_a_path(
 
     with pytest.raises(ValueError):
         paths.config_file(name)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "",
+        ".",
+        "..",
+        "../logs",
+        "data/logs",
+        r"data\logs",
+    ],
+)
+def test_program_data_dir_name_must_be_one_path_segment(
+    tmp_path: Path,
+    name: str,
+) -> None:
+    paths = RuntimePaths(
+        repo_root=tmp_path,
+        program_data_root=tmp_path,
+    )
+
+    with pytest.raises(ValueError):
+        paths.program_data_dir(name)

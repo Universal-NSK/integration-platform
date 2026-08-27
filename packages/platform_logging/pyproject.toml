@@ -1,0 +1,18 @@
+[project]
+name = "platform-logging"
+version = "0.1.0"
+description = "Shared standard-library logging configuration for Integration Platform services"
+authors = [
+    { name = "EHoTuK1", email = "mhernov13102@gmail.com" }
+]
+requires-python = ">=3.8,<3.9"
+dependencies = [
+    "runtime-files",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+runtime-files = { workspace = true }

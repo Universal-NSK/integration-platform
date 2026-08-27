@@ -8,6 +8,7 @@ dependencies = []
 members = [
     "services/bitrix_gateway",
     "packages/runtime_files",
+    "packages/platform_logging",
 ]
 
 [dependency-groups]
@@ -35,6 +36,7 @@ include = [
 extraPaths = [
     "services/bitrix_gateway/src",
     "packages/runtime_files/src",
+    "packages/platform_logging/src",
 ]
 
 exclude = [

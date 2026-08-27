@@ -55,6 +55,15 @@ class RuntimePaths:
 
         return self._program_data_root / name
 
+    def program_data_dir(
+        self,
+        name: str,
+    ) -> Path:
+        """Return a direct child directory of the Integration Platform data root."""
+        self._validate_directory_name(name)
+
+        return self._program_data_root / name
+
     @staticmethod
     def _default_program_data_root() -> Path:
         program_data = os.environ.get("PROGRAMDATA")
@@ -88,3 +97,13 @@ class RuntimePaths:
 
         if name in {".", ".."} or "/" in name or "\\" in name:
             raise ValueError("Expected a file name, not a path")
+
+    @staticmethod
+    def _validate_directory_name(
+        name: str,
+    ) -> None:
+        if not name:
+            raise ValueError("Directory name cannot be empty")
+
+        if name in {".", ".."} or "/" in name or "\\" in name:
+            raise ValueError("Expected a directory name, not a path")
