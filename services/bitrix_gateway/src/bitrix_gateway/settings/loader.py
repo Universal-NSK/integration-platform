@@ -18,8 +18,12 @@ def _load_toml(path: Path) -> Dict[str, Any]:
 
 
 def load_settings(path: Path) -> GatewaySettings:
+    """Загрузить и строго проверить несекретные настройки из TOML-файла."""
+
     return GatewaySettings.parse_obj(_load_toml(path))
 
 
 def load_secrets(path: Path) -> GatewaySecrets:
+    """Загрузить и строго проверить секретные настройки из TOML-файла."""
+
     return GatewaySecrets.parse_obj(_load_toml(path))

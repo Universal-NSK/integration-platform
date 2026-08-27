@@ -19,7 +19,7 @@ host = "127.0.0.1"
 port = 8765
 
 [logging]
-level = "INFO"
+level = "DEBUG"
 console = true
 log_payloads = true
 max_bytes = 50000000

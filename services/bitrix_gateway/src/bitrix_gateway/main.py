@@ -13,8 +13,12 @@ from bitrix_gateway.settings.loader import (
     load_settings,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def main() -> None:
+    """Запустить Gateway и штатно обработать остановку с клавиатуры."""
+
     try:
         asyncio.run(_run())
     except KeyboardInterrupt:
@@ -22,6 +26,8 @@ def main() -> None:
 
 
 async def _run() -> None:
+    """Собрать runtime внутри event loop и передать приложение Uvicorn."""
+
     paths = RuntimePaths.from_project(
         start=Path(__file__),
     )
@@ -45,10 +51,6 @@ async def _run() -> None:
     )
 
     app = create_app(runtime)
-
-    logger = logging.getLogger(
-        "bitrix_gateway",
-    )
 
     log_event(
         logger,

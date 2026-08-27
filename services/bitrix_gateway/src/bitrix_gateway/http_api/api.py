@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from fastapi import HTTPException
-from platform_logging import log_payload
+from platform_logging import log_event, log_payload
 
 from bitrix_gateway.contracts.models import GatewayRequest
 from bitrix_gateway.dispatch.dispatcher import RequestDispatcher
@@ -13,8 +13,12 @@ from bitrix_gateway.http_api.models import (
     HealthResponse,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class GatewayHttpApi:
+    """Преобразует HTTP-модели в контракт Dispatcher и обратно."""
+
     def __init__(
         self,
         dispatcher: RequestDispatcher,
@@ -22,25 +26,32 @@ class GatewayHttpApi:
         log_payloads: bool = False,
     ) -> None:
         if request_timeout <= 0:
-            raise ValueError("request_timeout must be greater than zero")
+            raise ValueError("request_timeout должен быть больше нуля")
 
         self._dispatcher = dispatcher
         self._request_timeout = request_timeout
         self._log_payloads = log_payloads
-        self._logger = logging.getLogger("bitrix_gateway")
 
     async def call(
         self,
         request: CallRequest,
     ) -> CallResponse:
-        log_payload(
-            self._logger,
+        """Выполнить вызов в пределах общего тайм-аута HTTP API."""
+
+        log_event(
+            logger,
             logging.INFO,
             "gateway_call_request",
+            method=request.method,
+            retry_policy=request.retry_policy.value,
+        )
+        log_payload(
+            logger,
+            logging.INFO,
+            "gateway_call_request_payload",
             request.payload,
             enabled=self._log_payloads,
             method=request.method,
-            retry_policy=request.retry_policy.value,
         )
 
         gateway_request = GatewayRequest(
@@ -55,15 +66,39 @@ class GatewayHttpApi:
                 timeout=self._request_timeout,
             )
         except QueueFullError as exc:
+            log_event(
+                logger,
+                logging.WARNING,
+                "gateway_call_rejected",
+                method=request.method,
+                http_status=503,
+                error_code="QUEUE_FULL",
+            )
             raise HTTPException(
                 status_code=503,
-                detail="Gateway queue is full",
+                detail="Очередь заданий Gateway переполнена",
             ) from exc
         except asyncio.TimeoutError as exc:
+            log_event(
+                logger,
+                logging.WARNING,
+                "gateway_call_timed_out",
+                method=request.method,
+                http_status=504,
+            )
             raise HTTPException(
                 status_code=504,
-                detail="Gateway request timed out",
+                detail="Истекло время ожидания ответа Gateway",
             ) from exc
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                "gateway_call_failed",
+                method=request.method,
+                exception_type=type(exc).__name__,
+            )
+            raise
 
         response = CallResponse(
             status=result.status,
@@ -74,23 +109,31 @@ class GatewayHttpApi:
             attempt_count=result.attempt_count,
         )
 
-        log_payload(
-            self._logger,
+        log_event(
+            logger,
             logging.INFO,
             "gateway_call_response",
-            result.data,
-            enabled=self._log_payloads,
-            field_name="response",
             method=request.method,
             status=result.status.value,
             http_status=result.http_status,
             error_code=result.error_code,
             attempt_count=result.attempt_count,
         )
+        log_payload(
+            logger,
+            logging.INFO,
+            "gateway_call_response_payload",
+            result.data,
+            enabled=self._log_payloads,
+            field_name="response",
+            method=request.method,
+        )
 
         return response
 
     async def health(self) -> HealthResponse:
+        """Вернуть состояние процесса без обращения к Bitrix24."""
+
         return HealthResponse(
             status="ok",
             queue_size=self._dispatcher.queue_size(),

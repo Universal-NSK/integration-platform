@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 
 import httpx
@@ -24,6 +25,8 @@ from bitrix_gateway.settings.models import (
 
 @dataclass(frozen=True)
 class GatewayRuntime:
+    """Объединяет ресурсы одного процесса Gateway и их владельцев."""
+
     http_client: httpx.AsyncClient
     dispatcher: RequestDispatcher
     api: GatewayHttpApi
@@ -31,6 +34,8 @@ class GatewayRuntime:
 
 
 def build_rate_limiter(settings: GatewaySettings) -> RateLimiter:
+    """Создать общий ограничитель частоты из настроек Gateway."""
+
     return RateLimiter(
         min_interval=settings.limits.min_interval,
     )
@@ -41,6 +46,8 @@ def build_runtime(
     secrets: GatewaySecrets,
     paths: RuntimePaths,
 ) -> GatewayRuntime:
+    """Собрать зависимости Gateway без изменения их жизненного цикла."""
+
     logging_session = configure_logging(
         service_name="bitrix_gateway",
         logger_name="bitrix_gateway",
@@ -53,9 +60,12 @@ def build_runtime(
             backup_count=settings.logging.backup_count,
         ),
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     http_client = httpx.AsyncClient(
         timeout=settings.bitrix.request_timeout,
+        trust_env=False,
     )
 
     rate_limiter = build_rate_limiter(settings)

@@ -4,6 +4,8 @@ from bitrix_gateway.contracts.models import TransportResult
 
 
 class TransportError(Exception):
+    """Сообщает о сбое транспорта и определённости результата запроса."""
+
     def __init__(
         self,
         message: str,
@@ -15,8 +17,13 @@ class TransportError(Exception):
 
 
 class BitrixTransport(Protocol):
+    """Определяет контракт транспорта для вызова методов Bitrix24."""
+
     async def call(
         self,
         method: str,
         payload: Dict[str, Any],
-    ) -> TransportResult: ...
+    ) -> TransportResult:
+        """Выполнить один вызов без применения политики повторов."""
+
+        ...

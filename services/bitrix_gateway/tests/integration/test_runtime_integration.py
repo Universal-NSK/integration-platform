@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from pathlib import Path
 
 import httpx
@@ -33,6 +34,8 @@ def test_build_runtime_composes_real_gateway_and_creates_log_session(tmp_path: P
             assert runtime.logging_session.log_file.parent == (
                 program_data_root / "logs" / "bitrix_gateway"
             )
+            assert logging.getLogger("httpx").level == logging.WARNING
+            assert logging.getLogger("httpcore").level == logging.WARNING
         finally:
             await runtime.http_client.aclose()
 

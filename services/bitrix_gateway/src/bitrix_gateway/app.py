@@ -10,16 +10,20 @@ from platform_logging import log_event
 from bitrix_gateway.bootstrap import GatewayRuntime
 from bitrix_gateway.http_api.routes import create_router
 
+logger = logging.getLogger(__name__)
+
 
 def create_app(
     runtime: GatewayRuntime,
 ) -> FastAPI:
-    logger = logging.getLogger("bitrix_gateway")
+    """Создать FastAPI-приложение поверх готового runtime Gateway."""
 
     @asynccontextmanager  # type: ignore
     async def lifespan(
         app: FastAPI,
     ) -> AsyncIterator[None]:
+        """Запустить worker и закрыть ресурсы в принятом простом lifecycle."""
+
         del app
 
         log_event(

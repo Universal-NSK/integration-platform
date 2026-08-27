@@ -49,7 +49,7 @@ def test_enqueue_raises_public_error_when_queue_is_full() -> None:
         accepted = _job("accepted")
         queue.enqueue(accepted)
 
-        with pytest.raises(QueueFullError, match="full"):
+        with pytest.raises(QueueFullError, match="переполнена"):
             queue.enqueue(_job("rejected"))
 
         assert queue.size() == 1

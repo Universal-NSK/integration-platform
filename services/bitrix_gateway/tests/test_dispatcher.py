@@ -288,7 +288,7 @@ def test_submit_raises_queue_full_without_waiting_for_a_result() -> None:
         await queue.enqueued.get()
 
         try:
-            with pytest.raises(QueueFullError, match="full"):
+            with pytest.raises(QueueFullError, match="переполнена"):
                 await dispatcher.submit(_request("rejected"))
 
             assert not accepted.done()

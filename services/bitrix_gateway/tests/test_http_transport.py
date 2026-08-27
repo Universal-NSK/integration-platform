@@ -154,7 +154,7 @@ def test_invalid_json_raises_uncertain_transport_error() -> None:
     error = _call_transport_error(handler)
 
     assert error.outcome_uncertain is True
-    assert "invalid JSON" in str(error)
+    assert "некорректный JSON" in str(error)
     assert "502" in str(error)
 
 
@@ -163,4 +163,4 @@ def test_unexpected_json_root_raises_uncertain_transport_error(root: Any) -> Non
     error = _call_transport_error(lambda request: httpx.Response(200, json=root))
 
     assert error.outcome_uncertain is True
-    assert "unexpected root type" in str(error)
+    assert "неожиданным типом корневого объекта" in str(error)

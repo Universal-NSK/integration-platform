@@ -33,12 +33,13 @@ def test_build_rate_limiter() -> None:
 
     assert asyncio.run(scenario()) == 0.5
 
+
 def test_main_suppresses_keyboard_interrupt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def raise_keyboard_interrupt(coro: object) -> None:
         if hasattr(coro, "close"):
-            coro.close() # type: ignore
+            coro.close()  # type: ignore
 
         raise KeyboardInterrupt
 

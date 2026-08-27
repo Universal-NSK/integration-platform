@@ -11,6 +11,8 @@ from bitrix_gateway.http_api.models import (
 def create_router(
     api: GatewayHttpApi,
 ) -> APIRouter:
+    """Создать HTTP-маршруты Gateway поверх прикладного API."""
+
     router = APIRouter()
 
     @router.post(
@@ -20,6 +22,8 @@ def create_router(
     async def call(
         request: CallRequest,
     ) -> CallResponse:
+        """Передать входящий вызов прикладному API Gateway."""
+
         return await api.call(request)
 
     @router.get(
@@ -27,6 +31,8 @@ def create_router(
         response_model=HealthResponse,
     )
     async def health() -> HealthResponse:
+        """Вернуть текущее состояние Gateway."""
+
         return await api.health()
 
     _ = call, health

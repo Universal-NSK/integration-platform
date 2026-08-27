@@ -243,7 +243,7 @@ def test_queue_full_is_gateway_503() -> None:
         )
 
     assert response.status_code == 503
-    assert response.json() == {"detail": "Gateway queue is full"}
+    assert response.json() == {"detail": "Очередь заданий Gateway переполнена"}
 
 
 def test_request_timeout_limits_entire_dispatcher_submission() -> None:
@@ -260,7 +260,7 @@ def test_request_timeout_limits_entire_dispatcher_submission() -> None:
         )
 
     assert response.status_code == 504
-    assert response.json() == {"detail": "Gateway request timed out"}
+    assert response.json() == {"detail": "Истекло время ожидания ответа Gateway"}
     assert len(dispatcher.submitted) == 1
 
 

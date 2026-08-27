@@ -88,9 +88,9 @@ def test_call_success_preserves_exact_method_payload_and_complete_response(
     assert assembled.runtime.http_client.is_closed is True
 
     log_text = read_log(assembled.runtime)
-    assert "gateway_call_request" in log_text
+    assert "gateway_call_request_payload" in log_text
     assert 'payload={"entityTypeId":2,"fields":{"TITLE":"Тест"}}' in log_text
-    assert "gateway_call_response" in log_text
+    assert "gateway_call_response_payload" in log_text
     assert "Тест" in log_text
     assert FAKE_WEBHOOK_URL not in log_text
     assert "fake-secret" not in log_text
