@@ -1,2 +1,5 @@
-def main() -> None:
-    print("Hello from bitrix-gateway!")
+from bitrix_gateway.main import main
+
+__all__ = [
+    "main",
+]

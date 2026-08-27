@@ -1,12 +1,25 @@
-import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict
 
-from bitrix_gateway.settings.models import GatewaySettings
+import tomli
+from runtime_files import read_text
+
+from bitrix_gateway.settings.models import (
+    GatewaySecrets,
+    GatewaySettings,
+)
+
+
+def _load_toml(path: Path) -> Dict[str, Any]:
+    content = read_text(path)
+    raw = tomli.loads(content)
+
+    return raw
 
 
 def load_settings(path: Path) -> GatewaySettings:
-    with path.open("r", encoding="utf-8") as file:
-        raw_config: Any = json.load(file)
+    return GatewaySettings.parse_obj(_load_toml(path))
 
-    return GatewaySettings.parse_obj(raw_config)
+
+def load_secrets(path: Path) -> GatewaySecrets:
+    return GatewaySecrets.parse_obj(_load_toml(path))

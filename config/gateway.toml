@@ -18,5 +18,9 @@ request_timeout = 150.0
 host = "127.0.0.1"
 port = 8765
 
-[shutdown]
-grace_timeout = 30.0
+[logging]
+level = "INFO"
+console = true
+log_payloads = true
+max_bytes = 50000000
+backup_count = 4

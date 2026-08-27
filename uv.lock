@@ -32,7 +32,10 @@ source = { editable = "services/bitrix_gateway" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "platform-logging" },
     { name = "pydantic" },
+    { name = "runtime-files" },
+    { name = "tomli" },
     { name = "uvicorn" },
 ]
 
@@ -40,7 +43,10 @@ dependencies = [
 requires-dist = [
     { name = "fastapi", specifier = "==0.115.0" },
     { name = "httpx", specifier = "==0.28.1" },
+    { name = "platform-logging", editable = "packages/platform_logging" },
     { name = "pydantic", specifier = "==1.10.26" },
+    { name = "runtime-files", editable = "packages/runtime_files" },
+    { name = "tomli", specifier = ">=2.4.1" },
     { name = "uvicorn", specifier = "==0.32.1" },
 ]
 
