@@ -1,20 +1,17 @@
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import pytest
 import tomli
-from nashdom_sync.settings import (
+from nashdom_sync.providers.settings_provider import (
     BrowserSettings,
     ConfigurationError,
     ConfigurationOverlapError,
     SettingsProvider,
     SyncSettings,
 )
-from nashdom_sync.settings.provider import (
-    _merge_settings,  # pyright: ignore[reportPrivateUsage]
-)
 from pydantic import ValidationError
-from runtime_files import RuntimePaths
+from runtime_files import RuntimeFileReadError, RuntimePaths
 
 VALID_APP_CONFIG = """
 [browser]
@@ -30,8 +27,8 @@ driver_path = "drivers/chrome/chromedriver_win32/chromedriver.exe"
 
 def _provider(
     tmp_path: Path,
-    app_config: Optional[str] = VALID_APP_CONFIG,
-    paths_config: Optional[str] = VALID_PATHS_CONFIG,
+    app_config: Optional[Union[str, bytes]] = VALID_APP_CONFIG,
+    paths_config: Optional[Union[str, bytes]] = VALID_PATHS_CONFIG,
 ) -> Tuple[SettingsProvider, Path]:
     repo_root = (tmp_path / "repository").resolve()
     config_root = repo_root / "config"
@@ -40,12 +37,17 @@ def _provider(
     program_data_root.mkdir()
 
     if app_config is not None:
-        (config_root / "sync.toml").write_text(app_config, encoding="utf-8")
+        app_config_path = config_root / "sync.toml"
+        if isinstance(app_config, bytes):
+            app_config_path.write_bytes(app_config)
+        else:
+            app_config_path.write_text(app_config, encoding="utf-8")
     if paths_config is not None:
-        (program_data_root / "sync.paths.toml").write_text(
-            paths_config,
-            encoding="utf-8",
-        )
+        paths_config_path = program_data_root / "sync.paths.toml"
+        if isinstance(paths_config, bytes):
+            paths_config_path.write_bytes(paths_config)
+        else:
+            paths_config_path.write_text(paths_config, encoding="utf-8")
 
     paths = RuntimePaths(
         repo_root=repo_root,
@@ -135,6 +137,28 @@ def test_provide_wraps_invalid_toml_with_parser_cause(
     assert isinstance(exc_info.value.__cause__, tomli.TOMLDecodeError)
 
 
+@pytest.mark.parametrize("invalid_source", ["sync.toml", "sync.paths.toml"])
+def test_provide_wraps_invalid_utf8_with_runtime_file_cause(
+    tmp_path: Path,
+    invalid_source: str,
+) -> None:
+    invalid_utf8 = b"\xff"
+    provider, _ = _provider(
+        tmp_path,
+        app_config=invalid_utf8 if invalid_source == "sync.toml" else VALID_APP_CONFIG,
+        paths_config=(invalid_utf8 if invalid_source == "sync.paths.toml" else VALID_PATHS_CONFIG),
+    )
+
+    with pytest.raises(ConfigurationError) as exc_info:
+        provider.provide()
+
+    assert "Не удалось прочитать файл конфигурации синхронизации" in str(exc_info.value)
+    assert invalid_source in str(exc_info.value)
+    runtime_error = exc_info.value.__cause__
+    assert isinstance(runtime_error, RuntimeFileReadError)
+    assert isinstance(runtime_error.__cause__, UnicodeDecodeError)
+
+
 def test_provide_wraps_missing_required_parameter_validation(tmp_path: Path) -> None:
     provider, _ = _provider(
         tmp_path,
@@ -147,7 +171,9 @@ browser_path = "drivers/chrome.exe"
     with pytest.raises(ConfigurationError) as exc_info:
         provider.provide()
 
-    assert "не прошла валидацию" in str(exc_info.value)
+    assert str(exc_info.value) == (
+        "В конфигурации отсутствует обязательный параметр browser.driver_path"
+    )
     assert isinstance(exc_info.value.__cause__, ValidationError)
     assert "driver_path" in str(exc_info.value)
 
@@ -162,7 +188,7 @@ def test_provide_requires_strict_boolean(tmp_path: Path) -> None:
         provider.provide()
 
     assert isinstance(exc_info.value.__cause__, ValidationError)
-    assert "headless" in str(exc_info.value)
+    assert str(exc_info.value) == ("Параметр browser.headless имеет недопустимое значение или тип")
 
 
 def test_provide_forbids_unknown_fields(tmp_path: Path) -> None:
@@ -179,8 +205,7 @@ headles = false
         provider.provide()
 
     assert isinstance(exc_info.value.__cause__, ValidationError)
-    assert "headles" in str(exc_info.value)
-    assert "extra fields not permitted" in str(exc_info.value)
+    assert str(exc_info.value) == ("В конфигурации указан неизвестный параметр browser.headles")
 
 
 def test_provide_rejects_absolute_machine_path(tmp_path: Path) -> None:
@@ -218,18 +243,20 @@ driver_path = "drivers/chromedriver.exe"
     assert isinstance(exc_info.value.__cause__, ValueError)
 
 
-def test_recursive_merge_combines_nested_tables_without_mutating_sources() -> None:
+def test_recursive_merge_combines_nested_tables_without_mutating_sources(tmp_path: Path) -> None:
+    provider, _ = _provider(tmp_path)
     first = {"browser": {"options": {"headless": False}}}
     second = {"browser": {"options": {"locale": "ru"}}}
 
-    merged = _merge_settings(first, second)
+    merged = provider._merge_settings(first, second)  # pyright: ignore[reportPrivateUsage]
 
     assert merged == {"browser": {"options": {"headless": False, "locale": "ru"}}}
     assert first == {"browser": {"options": {"headless": False}}}
     assert second == {"browser": {"options": {"locale": "ru"}}}
 
 
-def test_recursive_merge_reports_full_nested_overlap_path() -> None:
+def test_recursive_merge_reports_full_nested_overlap_path(tmp_path: Path) -> None:
+    provider, _ = _provider(tmp_path)
     first = {"browser": {"options": {"headless": False}}}
     second = {"browser": {"options": {"headless": True}}}
 
@@ -237,7 +264,7 @@ def test_recursive_merge_reports_full_nested_overlap_path() -> None:
         ConfigurationOverlapError,
         match=r"browser\.options\.headless",
     ):
-        _merge_settings(first, second)
+        provider._merge_settings(first, second)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_configuration_overlap_error_is_configuration_error() -> None:

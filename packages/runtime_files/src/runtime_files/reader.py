@@ -15,7 +15,7 @@ def read_text(
         )
     except FileNotFoundError as exc:
         raise RuntimeFileNotFoundError(path) from exc
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise RuntimeFileReadError(
             path,
             str(exc),

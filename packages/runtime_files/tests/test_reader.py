@@ -56,3 +56,14 @@ def test_read_text_wraps_os_error(
         read_text(path)
 
     assert exc_info.value.path == path
+
+
+def test_read_text_wraps_unicode_decode_error(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_bytes(b"\xff")
+
+    with pytest.raises(RuntimeFileReadError) as exc_info:
+        read_text(path)
+
+    assert exc_info.value.path == path
+    assert isinstance(exc_info.value.__cause__, UnicodeDecodeError)
