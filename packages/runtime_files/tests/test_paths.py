@@ -48,6 +48,56 @@ def test_program_data_dir_uses_explicit_root(
     assert result == (program_data_root / "logs")
 
 
+def test_program_data_path_resolves_nested_relative_path(
+    tmp_path: Path,
+) -> None:
+    program_data_root = tmp_path / "Universal" / "IntegrationPlatform"
+    paths = RuntimePaths(
+        repo_root=tmp_path / "repository",
+        program_data_root=program_data_root,
+    )
+
+    result = paths.program_data_path(
+        Path("drivers/chrome/chrome.exe"),
+    )
+
+    assert result == program_data_root / "drivers" / "chrome" / "chrome.exe"
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        Path("."),
+        Path(".."),
+        Path("../outside.exe"),
+        Path("drivers/../../outside.exe"),
+    ],
+)
+def test_program_data_path_rejects_root_and_traversal(
+    tmp_path: Path,
+    relative_path: Path,
+) -> None:
+    paths = RuntimePaths(
+        repo_root=tmp_path / "repository",
+        program_data_root=tmp_path / "program-data",
+    )
+
+    with pytest.raises(ValueError):
+        paths.program_data_path(relative_path)
+
+
+def test_program_data_path_rejects_absolute_path(
+    tmp_path: Path,
+) -> None:
+    paths = RuntimePaths(
+        repo_root=tmp_path / "repository",
+        program_data_root=tmp_path / "program-data",
+    )
+
+    with pytest.raises(ValueError):
+        paths.program_data_path(tmp_path / "outside.exe")
+
+
 def test_program_data_file_uses_windows_programdata(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

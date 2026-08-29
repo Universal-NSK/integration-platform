@@ -64,6 +64,27 @@ class RuntimePaths:
 
         return self._program_data_root / name
 
+    def program_data_path(
+        self,
+        relative_path: Path,
+    ) -> Path:
+        """Разрешить вложенный путь внутри корня ProgramData платформы."""
+        if relative_path.is_absolute():
+            raise ValueError("Expected a relative ProgramData path")
+
+        root = self._program_data_root.resolve()
+        candidate = (root / relative_path).resolve()
+
+        if candidate == root:
+            raise ValueError("Expected a child path inside ProgramData root")
+
+        try:
+            candidate.relative_to(root)
+        except ValueError as exc:
+            raise ValueError("ProgramData path must stay inside its root") from exc
+
+        return candidate
+
     @staticmethod
     def _default_program_data_root() -> Path:
         program_data = os.environ.get("PROGRAMDATA")

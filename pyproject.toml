@@ -6,9 +6,9 @@ dependencies = []
 
 [tool.uv.workspace]
 members = [
-    "services/bitrix_gateway",
-    "packages/runtime_files",
-    "packages/platform_logging",
+    "apps/*",
+    "services/*",
+    "packages/*",
 ]
 
 [dependency-groups]
