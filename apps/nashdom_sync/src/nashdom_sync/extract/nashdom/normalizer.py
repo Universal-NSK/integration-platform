@@ -56,15 +56,6 @@ class NashDomDataNormalizer:
             ),
             "ID объекта",
         )
-        title = self._normalize_required_text(
-            self._resolve_value(
-                raw_object,
-                _TITLE_PATHS,
-                "название объекта",
-                value_normalizer=self._normalize_required_text,
-            ),
-            "Название объекта",
-        )
         address = self._normalize_required_text(
             self._resolve_value(
                 raw_object,
@@ -74,6 +65,13 @@ class NashDomDataNormalizer:
             ),
             "Адрес объекта",
         )
+        raw_title = self._resolve_value(
+            raw_object,
+            _TITLE_PATHS,
+            "название объекта",
+            required=False,
+        )
+        title = self._normalize_title(raw_title, address)
         region_id = self._normalize_integer(
             self._resolve_value(
                 raw_object,
@@ -208,6 +206,16 @@ class NashDomDataNormalizer:
         if not isinstance(value, str) or not value.strip():
             raise NashDomNormalizationError(f"{field_name} не должно быть пустым")
         return value.strip()
+
+    @staticmethod
+    def _normalize_title(value: Any, address: str) -> str:
+        if value is None:
+            return address
+        if not isinstance(value, str):
+            raise NashDomNormalizationError("Название объекта должно быть строкой")
+
+        normalized_title = value.strip()
+        return normalized_title or address
 
     @staticmethod
     def _normalize_publication_date(value: Any) -> date:

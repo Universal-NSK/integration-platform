@@ -63,6 +63,63 @@ def test_normalizes_ssr_fixture_to_equivalent_canonical_object() -> None:
     assert ssr_object.company_group_id == xhr_object.company_group_id
 
 
+def test_xhr_null_title_falls_back_to_normalized_address() -> None:
+    raw_object = _fixture("nashdom_xhr_object.json")
+    raw_object["objAddr"] = "  Город Барнаул, Улица Пушкина, д. 16  "
+    raw_object["objCommercNm"] = None
+
+    result = NashDomDataNormalizer().normalize_objects([raw_object])[0]
+
+    assert result.title == "Город Барнаул, Улица Пушкина, д. 16"
+    assert result.title == result.address
+
+
+def test_ssr_null_title_falls_back_to_address() -> None:
+    raw_object = _fixture("nashdom_ssr_object.json")
+    raw_object["objCommercNm"] = None
+
+    result = NashDomDataNormalizer().normalize_objects([raw_object])[0]
+
+    assert result.title == result.address
+
+
+def test_missing_title_falls_back_to_address() -> None:
+    raw_object = _fixture("nashdom_xhr_object.json")
+    del raw_object["objCommercNm"]
+
+    result = NashDomDataNormalizer().normalize_objects([raw_object])[0]
+
+    assert result.title == result.address
+
+
+def test_whitespace_only_title_falls_back_to_address() -> None:
+    raw_object = _fixture("nashdom_xhr_object.json")
+    raw_object["objCommercNm"] = " \t\r\n "
+
+    result = NashDomDataNormalizer().normalize_objects([raw_object])[0]
+
+    assert result.title == result.address
+
+
+@pytest.mark.parametrize("invalid_title", [123, [], {}])
+def test_invalid_title_type_is_normalization_error(invalid_title: object) -> None:
+    raw_object = _fixture("nashdom_xhr_object.json")
+    raw_object["objCommercNm"] = invalid_title
+
+    with pytest.raises(NashDomNormalizationError, match="Название объекта должно быть строкой"):
+        NashDomDataNormalizer().normalize_objects([raw_object])
+
+
+def test_non_empty_title_preserves_commercial_name() -> None:
+    raw_object = _fixture("nashdom_xhr_object.json")
+    raw_object["objCommercNm"] = "  Коммерческое название  "
+
+    result = NashDomDataNormalizer().normalize_objects([raw_object])[0]
+
+    assert result.title == "Коммерческое название"
+    assert result.title != result.address
+
+
 def test_resolver_returns_single_source_value() -> None:
     result = NashDomDataNormalizer._resolve_value(  # pyright: ignore[reportPrivateUsage]
         {"objPublDt": "2026-08-21"},
