@@ -26,7 +26,7 @@ def _real_browser_settings() -> BrowserSettings:
 
     if browser_path and driver_path:
         return BrowserSettings(
-            headless=True,
+            headless=False,
             browser_path=Path(browser_path),
             driver_path=Path(driver_path),
         )

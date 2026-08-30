@@ -85,4 +85,5 @@ addopts = [
 
 markers = [
     "browser: реальный smoke test Selenium, ChromeDriver и Chrome",
+    "nashdom_live: интеграционный тест против живого сайта наш.дом.рф",
 ]

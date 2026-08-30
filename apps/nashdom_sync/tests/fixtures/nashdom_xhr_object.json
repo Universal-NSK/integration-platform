@@ -1,0 +1,12 @@
+{
+  "objId": 73232,
+  "objAddr": "Город Барнаул, Улица Пушкина, д. 16",
+  "objCommercNm": "Жилой комплекс \"Пушкина, 16\"",
+  "developer": {
+    "devId": 38039
+  },
+  "objReady100PercDt": "2028-12-31",
+  "buildType": "Жилое",
+  "rpdRegionCd": 22,
+  "objPublDt": "2026-08-21"
+}
