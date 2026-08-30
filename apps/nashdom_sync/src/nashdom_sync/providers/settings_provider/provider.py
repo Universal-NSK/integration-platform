@@ -1,8 +1,8 @@
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Tuple, cast
+from typing import Any, Dict, List, Mapping, Optional, Tuple, cast
 
 import tomli
-from pydantic import ValidationError
+from pydantic import BaseModel, StrictInt, StrictStr, ValidationError
 from runtime_files import (
     RuntimeFileNotFoundError,
     RuntimeFileReadError,
@@ -10,7 +10,7 @@ from runtime_files import (
     read_text,
 )
 
-from nashdom_sync.contracts import SyncSettings
+from nashdom_sync.contracts import NashDomRegion, RegionSettings, SyncSettings
 from nashdom_sync.providers.settings_provider.exceptions import (
     ConfigurationError,
     ConfigurationOverlapError,
@@ -18,7 +18,30 @@ from nashdom_sync.providers.settings_provider.exceptions import (
 
 _APP_CONFIG_NAME = "sync.toml"
 _PATHS_CONFIG_NAME = "sync.paths.toml"
+_REGION_SLUGS_CONFIG_NAME = "sync.region_slugs.toml"
+_REGION_CATALOG_KEY = "_region_catalog"
 _PATH_FIELDS = ("browser_path", "driver_path")
+
+
+class _StrictInputModel(BaseModel):
+    class Config:
+        allow_mutation = False
+        extra = "forbid"
+
+
+class _CatalogRegion(_StrictInputModel):
+    code: StrictInt
+    name: StrictStr
+    slug: Optional[StrictStr] = None
+
+
+class _RegionCatalog(_StrictInputModel):
+    regions: Tuple[_CatalogRegion, ...]
+
+
+class _RegionPostProcessingInput(_StrictInputModel):
+    region: RegionSettings
+    region_catalog: _RegionCatalog
 
 
 class SettingsProvider:
@@ -31,13 +54,91 @@ class SettingsProvider:
         """Вернуть единую проверенную конфигурацию синхронизации."""
         app_settings = self._load_toml(self._paths.config_file(_APP_CONFIG_NAME))
         path_settings = self._load_toml(self._paths.program_data_file(_PATHS_CONFIG_NAME))
+        region_catalog = self._load_toml(
+            self._paths.config_file(_REGION_SLUGS_CONFIG_NAME)
+        )
         merged_settings = self._merge_settings(app_settings, path_settings)
         resolved_settings = self._resolve_paths(merged_settings)
+        resolved_settings[_REGION_CATALOG_KEY] = region_catalog
 
         try:
-            return SyncSettings.parse_obj(resolved_settings)
+            processed_settings = self._post_process_settings(resolved_settings)
+            return SyncSettings.parse_obj(processed_settings)
         except ValidationError as exc:
             raise ConfigurationError(self._format_validation_error(exc)) from exc
+
+    def _post_process_settings(self, settings: Dict[str, Any]) -> Dict[str, Any]:
+        """Выполнить расширяемую последовательность преобразований настроек."""
+        processors = (self._define_regions_to_parse,)
+
+        for processor in processors:
+            settings = processor(settings)
+
+        return settings
+
+    @staticmethod
+    def _define_regions_to_parse(settings: Dict[str, Any]) -> Dict[str, Any]:
+        """Добавить в Extract регионы со slug, назначенные в runtime-настройках."""
+        source = _RegionPostProcessingInput.parse_obj(
+            {
+                "region": settings.get("region"),
+                "region_catalog": settings.get(_REGION_CATALOG_KEY),
+            }
+        )
+
+        catalog_by_code: Dict[int, _CatalogRegion] = {}
+        for catalog_region in source.region_catalog.regions:
+            if catalog_region.code in catalog_by_code:
+                raise ConfigurationError(
+                    "В sync.region_slugs.toml код региона "
+                    f"{catalog_region.code} указан несколько раз"
+                )
+            catalog_by_code[catalog_region.code] = catalog_region
+
+        unknown_codes = sorted(set(source.region.assignment) - set(catalog_by_code))
+        if unknown_codes:
+            formatted_codes = ", ".join(str(code) for code in unknown_codes)
+            raise ConfigurationError(
+                "В region.assignment указаны коды регионов, отсутствующие "
+                f"в sync.region_slugs.toml: {formatted_codes}"
+            )
+
+        regions_to_parse: List[Dict[str, Any]] = []
+        for catalog_region in source.region_catalog.regions:
+            slug = catalog_region.slug
+            if catalog_region.code not in source.region.assignment or not slug or not slug.strip():
+                continue
+
+            regions_to_parse.append(
+                NashDomRegion(
+                    code=catalog_region.code,
+                    name=catalog_region.name,
+                    slug=slug,
+                ).dict()
+            )
+
+        processed_settings = dict(settings)
+        processed_settings.pop(_REGION_CATALOG_KEY, None)
+        extract_settings = processed_settings.get("extract")
+        if not isinstance(extract_settings, Mapping):
+            return processed_settings
+
+        processed_extract = dict(cast(Mapping[str, Any], extract_settings))
+        nashdom_settings = processed_extract.get("nashdom")
+        if not isinstance(nashdom_settings, Mapping):
+            return processed_settings
+
+        processed_nashdom = dict(cast(Mapping[str, Any], nashdom_settings))
+        if "regions" in processed_nashdom:
+            raise ConfigurationError(
+                "Параметр extract.nashdom.regions должен вычисляться из region.assignment "
+                "и sync.region_slugs.toml"
+            )
+
+        processed_nashdom["regions"] = tuple(regions_to_parse)
+        processed_extract["nashdom"] = processed_nashdom
+        processed_settings["extract"] = processed_extract
+        return processed_settings
 
     @staticmethod
     def _load_toml(path: Path) -> Dict[str, Any]:
