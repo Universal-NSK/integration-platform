@@ -1,11 +1,10 @@
 """Компоненты синхронизации NashDom."""
 
+from nashdom_sync.contracts import BrowserSettings, SyncSettings
 from nashdom_sync.providers.settings_provider import (
-    BrowserSettings,
     ConfigurationError,
     ConfigurationOverlapError,
     SettingsProvider,
-    SyncSettings,
 )
 
 __all__ = [

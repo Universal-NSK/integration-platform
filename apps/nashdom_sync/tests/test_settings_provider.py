@@ -3,12 +3,11 @@ from typing import Optional, Tuple, Union
 
 import pytest
 import tomli
+from nashdom_sync.contracts import BrowserSettings, SyncSettings
 from nashdom_sync.providers.settings_provider import (
-    BrowserSettings,
     ConfigurationError,
     ConfigurationOverlapError,
     SettingsProvider,
-    SyncSettings,
 )
 from pydantic import ValidationError
 from runtime_files import RuntimeFileReadError, RuntimePaths

@@ -10,11 +10,11 @@ from runtime_files import (
     read_text,
 )
 
+from nashdom_sync.contracts import SyncSettings
 from nashdom_sync.providers.settings_provider.exceptions import (
     ConfigurationError,
     ConfigurationOverlapError,
 )
-from nashdom_sync.providers.settings_provider.models import SyncSettings
 
 _APP_CONFIG_NAME = "sync.toml"
 _PATHS_CONFIG_NAME = "sync.paths.toml"
