@@ -82,3 +82,7 @@ addopts = [
     "-ra",
     "--strict-markers",
 ]
+
+markers = [
+    "browser: реальный smoke test Selenium, ChromeDriver и Chrome",
+]

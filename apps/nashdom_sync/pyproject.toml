@@ -10,6 +10,7 @@ requires-python = ">=3.8,<3.9"
 dependencies = [
     "pydantic==1.10.26",
     "runtime-files",
+    "selenium==4.27.1",
     "tomli>=2.4.1",
 ]
 
