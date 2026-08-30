@@ -1,0 +1,363 @@
+[[regions]]
+code = 1
+name = "Республика Адыгея"
+
+[[regions]]
+code = 4
+name = "Республика Алтай"
+slug = "республика-алтай"
+
+[[regions]]
+code = 22
+name = "Алтайский край"
+slug = "алтайский-край"
+
+[[regions]]
+code = 28
+name = "Амурская область"
+
+[[regions]]
+code = 29
+name = "Архангельская область"
+
+[[regions]]
+code = 30
+name = "Астраханская область"
+
+[[regions]]
+code = 2
+name = "Республика Башкортостан"
+
+[[regions]]
+code = 31
+name = "Белгородская область"
+
+[[regions]]
+code = 32
+name = "Брянская область"
+
+[[regions]]
+code = 3
+name = "Республика Бурятия"
+slug = "республика-бурятия"
+
+[[regions]]
+code = 33
+name = "Владимирская область"
+
+[[regions]]
+code = 34
+name = "Волгоградская область"
+
+[[regions]]
+code = 35
+name = "Вологодская область"
+
+[[regions]]
+code = 36
+name = "Воронежская область"
+
+[[regions]]
+code = 5
+name = "Республика Дагестан"
+
+[[regions]]
+code = 93
+name = "Донецкая Народная Республика"
+
+[[regions]]
+code = 79
+name = "Еврейская АО"
+
+[[regions]]
+code = 75
+name = "Забайкальский край"
+slug = "забайкальский-край"
+
+[[regions]]
+code = 90
+name = "Запорожская область"
+
+[[regions]]
+code = 37
+name = "Ивановская область"
+
+[[regions]]
+code = 6
+name = "Республика Ингушетия"
+
+[[regions]]
+code = 38
+name = "Иркутская область"
+slug = "иркутская-область"
+
+[[regions]]
+code = 7
+name = "Кабардино-Балкарская Республика"
+
+[[regions]]
+code = 39
+name = "Калининградская область"
+
+[[regions]]
+code = 8
+name = "Республика Калмыкия"
+
+[[regions]]
+code = 40
+name = "Калужская область"
+
+[[regions]]
+code = 41
+name = "Камчатский край"
+
+[[regions]]
+code = 9
+name = "Карачаево-Черкесская Республика"
+
+[[regions]]
+code = 10
+name = "Республика Карелия"
+
+[[regions]]
+code = 42
+name = "Кемеровская область - Кузбасс"
+
+[[regions]]
+code = 43
+name = "Кировская область"
+
+[[regions]]
+code = 11
+name = "Республика Коми"
+
+[[regions]]
+code = 44
+name = "Костромская область"
+
+[[regions]]
+code = 23
+name = "Краснодарский край"
+
+[[regions]]
+code = 24
+name = "Красноярский край"
+
+[[regions]]
+code = 91
+name = "Республика Крым"
+
+[[regions]]
+code = 45
+name = "Курганская область"
+
+[[regions]]
+code = 46
+name = "Курская область"
+
+[[regions]]
+code = 47
+name = "Ленинградская область"
+
+[[regions]]
+code = 48
+name = "Липецкая область"
+
+[[regions]]
+code = 94
+name = "Луганская Народная Республика"
+
+[[regions]]
+code = 49
+name = "Магаданская область"
+
+[[regions]]
+code = 12
+name = "Республика Марий Эл"
+
+[[regions]]
+code = 13
+name = "Республика Мордовия"
+
+[[regions]]
+code = 77
+name = "Москва"
+
+[[regions]]
+code = 50
+name = "Московская область"
+
+[[regions]]
+code = 51
+name = "Мурманская область"
+
+[[regions]]
+code = 83
+name = "Ненецкий АО"
+
+[[regions]]
+code = 52
+name = "Нижегородская область"
+
+[[regions]]
+code = 53
+name = "Новгородская область"
+
+[[regions]]
+code = 54
+name = "Новосибирская область"
+slug = "новосибирская-область"
+
+[[regions]]
+code = 55
+name = "Омская область"
+slug = "омская-область"
+
+[[regions]]
+code = 56
+name = "Оренбургская область"
+
+[[regions]]
+code = 57
+name = "Орловская область"
+
+[[regions]]
+code = 58
+name = "Пензенская область"
+
+[[regions]]
+code = 59
+name = "Пермский край"
+
+[[regions]]
+code = 25
+name = "Приморский край"
+
+[[regions]]
+code = 60
+name = "Псковская область"
+
+[[regions]]
+code = 61
+name = "Ростовская область"
+
+[[regions]]
+code = 62
+name = "Рязанская область"
+
+[[regions]]
+code = 63
+name = "Самарская область"
+
+[[regions]]
+code = 78
+name = "Санкт-Петербург"
+
+[[regions]]
+code = 64
+name = "Саратовская область"
+
+[[regions]]
+code = 14
+name = "Республика Саха (Якутия)"
+slug = "республика-саха-якутия"
+
+[[regions]]
+code = 65
+name = "Сахалинская область"
+
+[[regions]]
+code = 66
+name = "Свердловская область"
+
+[[regions]]
+code = 92
+name = "Севастополь"
+
+[[regions]]
+code = 15
+name = "Республика Северная Осетия"
+
+[[regions]]
+code = 67
+name = "Смоленская область"
+
+[[regions]]
+code = 26
+name = "Ставропольский край"
+
+[[regions]]
+code = 68
+name = "Тамбовская область"
+
+[[regions]]
+code = 16
+name = "Республика Татарстан"
+
+[[regions]]
+code = 69
+name = "Тверская область"
+
+[[regions]]
+code = 70
+name = "Томская область"
+
+[[regions]]
+code = 71
+name = "Тульская область"
+
+[[regions]]
+code = 17
+name = "Республика Тыва"
+
+[[regions]]
+code = 72
+name = "Тюменская область"
+
+[[regions]]
+code = 18
+name = "Удмуртская Республика"
+
+[[regions]]
+code = 73
+name = "Ульяновская область"
+
+[[regions]]
+code = 27
+name = "Хабаровский край"
+
+[[regions]]
+code = 19
+name = "Республика Хакасия"
+
+[[regions]]
+code = 86
+name = "Ханты-Мансийский АО - Югра"
+
+[[regions]]
+code = 95
+name = "Херсонская область"
+
+[[regions]]
+code = 74
+name = "Челябинская область"
+
+[[regions]]
+code = 20
+name = "Чеченская Республика"
+
+[[regions]]
+code = 21
+name = "Чувашская Республика"
+
+[[regions]]
+code = 87
+name = "Чукотский АО"
+
+[[regions]]
+code = 89
+name = "Ямало-Ненецкий АО"
+
+[[regions]]
+code = 76
+name = "Ярославская область"

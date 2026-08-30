@@ -1,2 +1,18 @@
 [browser]
-headless = false
+headless = false   # Переключение отображения браузера
+
+[extract.nashdom]
+objects_to_parse_count = 35   # Кол-во объектов КАЖДОГО РЕГИОНА для парсинга
+
+[region]
+default_assigned_by_id = 12
+
+[region.assignment]
+3 = 12
+4 = 28
+14 = 12
+22 = 28
+38 = 12
+54 = 8
+55 = 34
+75 = 12
