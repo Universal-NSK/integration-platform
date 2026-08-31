@@ -3,6 +3,7 @@
 from nashdom_sync.contracts.extract import (
     BaseExtractedDataclass,
     CommissioningPeriod,
+    ExtractedDeveloper,
     ExtractedObject,
     ExtractedObjectTypeEnum,
     ExtractResult,
@@ -20,6 +21,7 @@ __all__ = [
     "BaseExtractedDataclass",
     "BrowserSettings",
     "CommissioningPeriod",
+    "ExtractedDeveloper",
     "ExtractedObject",
     "ExtractedObjectTypeEnum",
     "ExtractResult",

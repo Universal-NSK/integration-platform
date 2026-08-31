@@ -4,6 +4,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, cast
 
 from nashdom_sync.contracts import (
     CommissioningPeriod,
+    ExtractedDeveloper,
     ExtractedObject,
     ExtractedObjectTypeEnum,
 )
@@ -23,8 +24,23 @@ _PUBLICATION_DATE_PATHS: _SourcePaths = (
 )
 _COMMISSIONING_PERIOD_PATHS: _SourcePaths = (("objReady100PercDt",),)
 _OBJECT_TYPE_PATHS: _SourcePaths = (("buildType",),)
-_DEVELOPER_ID_PATHS: _SourcePaths = (("developer", "devId"),)
+_OBJECT_DEVELOPER_ID_PATHS: _SourcePaths = (("developer", "devId"),)
 _COMPANY_GROUP_ID_PATHS: _SourcePaths = (("developer", "companyGroup"),)
+
+_DEVELOPER_ID_PATHS: _SourcePaths = (("devId",),)
+_DEVELOPER_SHORT_NAME_PATHS: _SourcePaths = (("devShortCleanNm",),)
+_DEVELOPER_FULL_NAME_PATHS: _SourcePaths = (("devFullCleanNm",),)
+_DEVELOPER_INN_PATHS: _SourcePaths = (("devInn",),)
+_DEVELOPER_KPP_PATHS: _SourcePaths = (("devKpp",),)
+_DEVELOPER_OGRN_PATHS: _SourcePaths = (("devOgrn",),)
+_DEVELOPER_REGION_ID_PATHS: _SourcePaths = (("devOrgRegRegionCd",),)
+_DEVELOPER_LEGAL_ADDRESS_PATHS: _SourcePaths = (("devLegalAddr",),)
+_DEVELOPER_FACT_ADDRESS_PATHS: _SourcePaths = (("devFactAddr",),)
+_DEVELOPER_CONTACT_NAME_PATHS: _SourcePaths = (("devEmplMainFullNm",),)
+_DEVELOPER_PHONE_PATHS: _SourcePaths = (("devPhoneNum",),)
+_DEVELOPER_EMAIL_PATHS: _SourcePaths = (("devEmail",),)
+_DEVELOPER_URL_PATHS: _SourcePaths = (("devSite",),)
+_DEVELOPER_COMPANY_GROUP_ID_PATHS: _SourcePaths = (("companyGroupId",),)
 
 _QUARTER_PATTERN = re.compile(r"^(I|II|III|IV)\s+кв\.\s+(\d{4})$")
 _ROMAN_QUARTERS = {
@@ -45,6 +61,171 @@ class NashDomDataNormalizer:
     ) -> List[ExtractedObject]:
         """Нормализовать список raw-объектов одной source-схемы."""
         return [self._normalize_object(raw_object) for raw_object in raw_objects]
+
+    def normalize_developers(
+        self,
+        raw_developers: List[Dict[str, Any]],
+    ) -> List[ExtractedDeveloper]:
+        """Нормализовать застройщиков из подтверждённой flat ERZ-схемы."""
+        return [
+            self._normalize_developer(raw_developer)
+            for raw_developer in raw_developers
+        ]
+
+    def _normalize_developer(
+        self,
+        raw_developer: Dict[str, Any],
+    ) -> ExtractedDeveloper:
+        developer_id = self._normalize_integer(
+            self._resolve_value(
+                raw_developer,
+                _DEVELOPER_ID_PATHS,
+                "ID застройщика",
+                value_normalizer=self._normalize_integer,
+            ),
+            "ID застройщика",
+        )
+        short_name = self._normalize_required_text(
+            self._resolve_value(
+                raw_developer,
+                _DEVELOPER_SHORT_NAME_PATHS,
+                "краткое наименование застройщика",
+                value_normalizer=self._normalize_required_text,
+            ),
+            "Краткое наименование застройщика",
+        )
+        full_name = self._normalize_required_text(
+            self._resolve_value(
+                raw_developer,
+                _DEVELOPER_FULL_NAME_PATHS,
+                "полное наименование застройщика",
+                value_normalizer=self._normalize_required_text,
+            ),
+            "Полное наименование застройщика",
+        )
+        inn = self._normalize_required_text(
+            self._resolve_value(
+                raw_developer,
+                _DEVELOPER_INN_PATHS,
+                "ИНН застройщика",
+                value_normalizer=self._normalize_required_text,
+            ),
+            "ИНН застройщика",
+        )
+        kpp = self._normalize_required_text(
+            self._resolve_value(
+                raw_developer,
+                _DEVELOPER_KPP_PATHS,
+                "КПП застройщика",
+                value_normalizer=self._normalize_required_text,
+            ),
+            "КПП застройщика",
+        )
+        ogrn = self._normalize_required_text(
+            self._resolve_value(
+                raw_developer,
+                _DEVELOPER_OGRN_PATHS,
+                "ОГРН застройщика",
+                value_normalizer=self._normalize_required_text,
+            ),
+            "ОГРН застройщика",
+        )
+        region_id = self._normalize_integer(
+            self._resolve_value(
+                raw_developer,
+                _DEVELOPER_REGION_ID_PATHS,
+                "ID региона застройщика",
+                value_normalizer=self._normalize_integer,
+            ),
+            "ID региона застройщика",
+        )
+        legal_address = self._normalize_required_text(
+            self._resolve_value(
+                raw_developer,
+                _DEVELOPER_LEGAL_ADDRESS_PATHS,
+                "юридический адрес застройщика",
+                value_normalizer=self._normalize_required_text,
+            ),
+            "Юридический адрес застройщика",
+        )
+        fact_address = self._normalize_required_text(
+            self._resolve_value(
+                raw_developer,
+                _DEVELOPER_FACT_ADDRESS_PATHS,
+                "фактический адрес застройщика",
+                value_normalizer=self._normalize_required_text,
+            ),
+            "Фактический адрес застройщика",
+        )
+        contact_name = self._normalize_required_text(
+            self._resolve_value(
+                raw_developer,
+                _DEVELOPER_CONTACT_NAME_PATHS,
+                "контактное лицо застройщика",
+                value_normalizer=self._normalize_required_text,
+            ),
+            "Контактное лицо застройщика",
+        )
+        phone = self._normalize_required_text(
+            self._resolve_value(
+                raw_developer,
+                _DEVELOPER_PHONE_PATHS,
+                "телефон застройщика",
+                value_normalizer=self._normalize_required_text,
+            ),
+            "Телефон застройщика",
+        )
+        email = self._normalize_required_text(
+            self._resolve_value(
+                raw_developer,
+                _DEVELOPER_EMAIL_PATHS,
+                "email застройщика",
+                value_normalizer=self._normalize_required_text,
+            ),
+            "Email застройщика",
+        )
+        raw_url = self._resolve_value(
+            raw_developer,
+            _DEVELOPER_URL_PATHS,
+            "URL застройщика",
+            required=False,
+            value_normalizer=self._normalize_optional_text,
+        )
+        url = None if raw_url is None else self._normalize_optional_text(raw_url)
+        raw_company_group_id = self._resolve_value(
+            raw_developer,
+            _DEVELOPER_COMPANY_GROUP_ID_PATHS,
+            "ID группы компаний",
+            required=False,
+            value_normalizer=self._normalize_integer,
+        )
+        company_group_id = (
+            None
+            if raw_company_group_id is None
+            else self._normalize_integer(raw_company_group_id, "ID группы компаний")
+        )
+
+        try:
+            return ExtractedDeveloper(
+                id=developer_id,
+                short_name=short_name,
+                full_name=full_name,
+                inn=inn,
+                kpp=kpp,
+                ogrn=ogrn,
+                region_id=region_id,
+                legal_address=legal_address,
+                fact_address=fact_address,
+                contact_name=contact_name,
+                phone=phone,
+                email=email,
+                url=url,
+                company_group_id=company_group_id,
+            )
+        except ValueError as exc:
+            raise NashDomNormalizationError(
+                f"Застройщик NashDom с ID {developer_id} нарушает контракт: {exc}"
+            ) from exc
 
     def _normalize_object(self, raw_object: Dict[str, Any]) -> ExtractedObject:
         object_id = self._normalize_integer(
@@ -108,7 +289,7 @@ class NashDomDataNormalizer:
         developer_id = self._normalize_integer(
             self._resolve_value(
                 raw_object,
-                _DEVELOPER_ID_PATHS,
+                _OBJECT_DEVELOPER_ID_PATHS,
                 "ID застройщика",
                 value_normalizer=self._normalize_integer,
             ),
@@ -205,6 +386,14 @@ class NashDomDataNormalizer:
     def _normalize_required_text(value: Any, field_name: str = "текстовое поле") -> str:
         if not isinstance(value, str) or not value.strip():
             raise NashDomNormalizationError(f"{field_name} не должно быть пустым")
+        return value.strip()
+
+    @staticmethod
+    def _normalize_optional_text(value: Any) -> str:
+        if not isinstance(value, str):
+            raise NashDomNormalizationError("URL застройщика должен быть строкой")
+        if not value.strip():
+            raise NashDomNormalizationError("URL застройщика не должен быть пустым")
         return value.strip()
 
     @staticmethod

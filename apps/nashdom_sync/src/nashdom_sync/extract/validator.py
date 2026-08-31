@@ -1,6 +1,6 @@
-from typing import Sequence, Set
+from typing import Dict, Sequence, Set
 
-from nashdom_sync.contracts import ExtractedObject
+from nashdom_sync.contracts import ExtractedDeveloper, ExtractedObject
 from nashdom_sync.extract.exceptions import SourceDataValidationError
 
 
@@ -39,3 +39,87 @@ class SourceDataValidator:
             raise SourceDataValidationError(
                 f"NashDom вернул объекты из незапрошенных регионов: {formatted_ids}"
             )
+
+    def validate_developers(
+        self,
+        developers: Sequence[ExtractedDeveloper],
+        expected_developer_ids: Set[int],
+    ) -> None:
+        """Проверить точное соответствие набора запрошенным ID застройщиков."""
+        seen_ids: Set[int] = set()
+        duplicate_ids: Set[int] = set()
+
+        for developer in developers:
+            if developer.id in seen_ids:
+                duplicate_ids.add(developer.id)
+            seen_ids.add(developer.id)
+
+        if duplicate_ids:
+            formatted_ids = ", ".join(
+                str(developer_id) for developer_id in sorted(duplicate_ids)
+            )
+            raise SourceDataValidationError(
+                f"В наборе NashDom повторяются ID застройщиков: {formatted_ids}"
+            )
+
+        unexpected_ids = seen_ids - expected_developer_ids
+        if unexpected_ids:
+            formatted_ids = ", ".join(
+                str(developer_id) for developer_id in sorted(unexpected_ids)
+            )
+            raise SourceDataValidationError(
+                f"NashDom вернул незапрошенных застройщиков: {formatted_ids}"
+            )
+
+        missing_ids = expected_developer_ids - seen_ids
+        if missing_ids:
+            formatted_ids = ", ".join(
+                str(developer_id) for developer_id in sorted(missing_ids)
+            )
+            raise SourceDataValidationError(
+                f"NashDom не вернул запрошенных застройщиков: {formatted_ids}"
+            )
+
+    def validate_company_group_consistency(
+        self,
+        objects: Sequence[ExtractedObject],
+        developers: Sequence[ExtractedDeveloper],
+    ) -> None:
+        """Сверить только одновременно известные связи с группой компаний."""
+        object_group_ids: Dict[int, Set[int]] = {}
+        for extracted_object in objects:
+            if extracted_object.company_group_id is None:
+                continue
+            object_group_ids.setdefault(extracted_object.developer_id, set()).add(
+                extracted_object.company_group_id
+            )
+
+        conflicting_object_groups = {
+            developer_id: group_ids
+            for developer_id, group_ids in object_group_ids.items()
+            if len(group_ids) > 1
+        }
+        if conflicting_object_groups:
+            formatted_conflicts = "; ".join(
+                f"{developer_id}: {', '.join(str(group_id) for group_id in sorted(group_ids))}"
+                for developer_id, group_ids in sorted(conflicting_object_groups.items())
+            )
+            raise SourceDataValidationError(
+                "Объекты одного застройщика ссылаются на разные группы компаний: "
+                f"{formatted_conflicts}"
+            )
+
+        developer_group_ids = {
+            developer.id: developer.company_group_id for developer in developers
+        }
+        for developer_id, group_ids in object_group_ids.items():
+            developer_group_id = developer_group_ids.get(developer_id)
+            if developer_group_id is None:
+                continue
+
+            object_group_id = next(iter(group_ids))
+            if object_group_id != developer_group_id:
+                raise SourceDataValidationError(
+                    f"Застройщик {developer_id} связан с группой {developer_group_id}, "
+                    f"а его объекты — с группой {object_group_id}"
+                )

@@ -16,6 +16,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 from nashdom_sync.contracts import (
     BaseExtractedDataclass,
+    ExtractedDeveloper,
     ExtractedObject,
     NashDomExtractSettings,
     NashDomRegion,
@@ -29,6 +30,8 @@ from nashdom_sync.extract.nashdom.normalizer import NashDomDataNormalizer
 _WAIT_TIMEOUT_SECONDS = 30
 _API_BATCH_SIZE = 20
 _API_ENDPOINT_MARKER = "/api/kn/object"
+_DEVELOPER_API_BATCH_SIZE = 1000
+_DEVELOPER_API_PATH = "/сервисы/api/erz/main/filter"
 _BASE_URL = "https://xn--80az8a.xn--d1aqf.xn--p1ai"
 
 _Locator = Tuple[str, str]
@@ -126,9 +129,44 @@ fetch(url, {
 });
 """
 
+_PUBLIC_BROWSER_FETCH_SCRIPT = """
+const url = arguments[0];
+const done = arguments[arguments.length - 1];
+
+fetch(url, {
+    method: "GET",
+    credentials: "same-origin",
+    headers: {
+        "Accept": "application/json, text/plain, */*"
+    }
+})
+.then(async (response) => {
+    const raw = await response.text();
+    let body = null;
+
+    try {
+        body = JSON.parse(raw);
+    } catch (_) {
+        body = raw;
+    }
+
+    done({
+        status: response.status,
+        body: body
+    });
+})
+.catch((error) => {
+    done({
+        status: null,
+        error: String(error)
+    });
+});
+"""
+
 _CHALLENGE_MARKERS = (
     "captcha-container",
     "cf-chl-",
+    '<noscript><meta http-equiv="refresh"',
     "подтвердите, что вы не робот",
     "проверка браузера",
     "too many requests",
@@ -151,6 +189,12 @@ class _CapturedRequest:
 class _ApiBatch:
     items: List[Dict[str, Any]]
     total: int
+
+
+@dataclass(frozen=True)
+class _DeveloperApiBatch:
+    items: List[Dict[str, Any]]
+    count: int
 
 
 class NashDomClient:
@@ -178,9 +222,23 @@ class NashDomClient:
 
         return objects
 
-    def get_developers(self, developer_ids: Set[int]) -> List[BaseExtractedDataclass]:
-        """Получение застройщиков будет реализовано в следующей итерации."""
-        raise NotImplementedError("Извлечение застройщиков NashDom ещё не реализовано")
+    def get_developers(self, developer_ids: Set[int]) -> List[ExtractedDeveloper]:
+        """Получить запрошенных застройщиков через bulk ERZ с detail fallback."""
+        if not developer_ids:
+            return []
+
+        self._configure_timeouts()
+        self._ensure_nashdom_context()
+        raw_developers = self._collect_bulk_developers(developer_ids)
+
+        missing_ids = developer_ids - set(raw_developers)
+        for developer_id in sorted(missing_ids):
+            raw_developers[developer_id] = self._read_detail_developer(developer_id)
+
+        normalized_developers = self._normalizer.normalize_developers(
+            [raw_developers[developer_id] for developer_id in sorted(developer_ids)]
+        )
+        return sorted(normalized_developers, key=lambda developer: developer.id)
 
     def get_company_groups(
         self,
@@ -188,6 +246,326 @@ class NashDomClient:
     ) -> List[BaseExtractedDataclass]:
         """Получение групп компаний будет реализовано в следующей итерации."""
         raise NotImplementedError("Извлечение групп компаний NashDom ещё не реализовано")
+
+    def _collect_bulk_developers(
+        self,
+        developer_ids: Set[int],
+    ) -> Dict[int, Dict[str, Any]]:
+        registry_index: Dict[int, Dict[str, Any]] = {}
+        requested_developers: Dict[int, Dict[str, Any]] = {}
+        offset = 0
+
+        while True:
+            batch = self._fetch_developer_batch(
+                offset=offset,
+                limit=_DEVELOPER_API_BATCH_SIZE,
+            )
+            if batch.count == 0 and batch.items:
+                raise NashDomClientError(
+                    "ERZ bulk API вернул застройщиков при data.count=0"
+                )
+
+            has_new_registry_record = False
+            for raw_developer in batch.items:
+                developer_id = self._read_raw_developer_id(raw_developer)
+                existing_developer = registry_index.get(developer_id)
+                if (
+                    existing_developer is not None
+                    and existing_developer != raw_developer
+                ):
+                    raise NashDomClientError(
+                        "ERZ bulk API вернул различающиеся записи "
+                        f"для повторного devId={developer_id}"
+                    )
+
+                if existing_developer is None:
+                    registry_index[developer_id] = raw_developer
+                    has_new_registry_record = True
+                if developer_id in developer_ids:
+                    requested_developers[developer_id] = raw_developer
+
+            if developer_ids.issubset(requested_developers):
+                break
+            if not batch.items or len(batch.items) < _DEVELOPER_API_BATCH_SIZE:
+                break
+            if not has_new_registry_record:
+                break
+
+            offset += len(batch.items)
+
+        return requested_developers
+
+    def _fetch_developer_batch(
+        self,
+        *,
+        offset: int,
+        limit: int,
+    ) -> _DeveloperApiBatch:
+        url = self._build_developers_api_url(offset, limit)
+        raw_result_value: object = None
+        fetch_failure: Optional[str] = None
+        try:
+            raw_result_value = cast(
+                object,
+                self._driver.execute_async_script(  # pyright: ignore[reportUnknownMemberType]
+                    _PUBLIC_BROWSER_FETCH_SCRIPT,
+                    url,
+                ),
+            )
+        except TimeoutException:
+            fetch_failure = "timeout"
+        except WebDriverException:
+            fetch_failure = "webdriver"
+
+        if fetch_failure == "timeout":
+            raise NashDomUnavailableError(
+                f"NashDom не ответил на ERZ bulk fetch с offset={offset}"
+            )
+        if fetch_failure == "webdriver":
+            raise NashDomClientError(
+                f"Не удалось выполнить ERZ bulk fetch с offset={offset}"
+            )
+
+        if not isinstance(raw_result_value, dict):
+            raise NashDomClientError("ERZ bulk fetch вернул неожиданный результат")
+
+        raw_result = cast(Dict[str, Any], raw_result_value)
+        status = raw_result.get("status")
+        body = raw_result.get("body")
+        if status is None:
+            raise NashDomUnavailableError(
+                f"Сетевая ошибка ERZ bulk fetch с offset={offset}"
+            )
+        if not isinstance(status, int) or isinstance(status, bool):
+            raise NashDomClientError("ERZ bulk fetch вернул некорректный HTTP status")
+
+        self._raise_for_http_status(status, body, f"ERZ bulk fetch offset={offset}")
+        if self._contains_challenge(body):
+            raise NashDomUnavailableError(
+                f"NashDom вернул anti-bot/challenge во время ERZ bulk fetch offset={offset}"
+            )
+        if not isinstance(body, dict):
+            raise NashDomClientError("ERZ bulk API вернул не JSON-объект")
+        body_mapping = cast(Dict[str, Any], body)
+        if body_mapping.get("errcode") != "0":
+            raise NashDomClientError("ERZ bulk API вернул неожиданный errcode")
+
+        data = body_mapping.get("data")
+        if not isinstance(data, dict):
+            raise NashDomClientError("В ответе ERZ bulk API отсутствует объект data")
+
+        data_mapping = cast(Dict[str, Any], data)
+        raw_items = data_mapping.get("developers")
+        count = data_mapping.get("count")
+        if not isinstance(raw_items, list):
+            raise NashDomClientError(
+                "В ответе ERZ bulk API data.developers не является списком"
+            )
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            raise NashDomClientError(
+                "В ответе ERZ bulk API data.count имеет неверный тип"
+            )
+
+        items: List[Dict[str, Any]] = []
+        for raw_item in cast(List[Any], raw_items):
+            if not isinstance(raw_item, dict):
+                raise NashDomClientError(
+                    "ERZ bulk data.developers содержит не объект JSON"
+                )
+            items.append(cast(Dict[str, Any], raw_item))
+        return _DeveloperApiBatch(items=items, count=count)
+
+    @staticmethod
+    def _build_developers_api_url(offset: int, limit: int) -> str:
+        query = urlencode(
+            {
+                "offset": offset,
+                "limit": limit,
+                "sortField": "devShortNm",
+                "sortType": "asc",
+                "objStatus": 0,
+            }
+        )
+        return f"{_BASE_URL}{_DEVELOPER_API_PATH}?{query}"
+
+    @staticmethod
+    def _read_raw_developer_id(raw_developer: Dict[str, Any]) -> int:
+        developer_id = raw_developer.get("devId")
+        if not isinstance(developer_id, int) or isinstance(developer_id, bool):
+            raise NashDomClientError(
+                "Запись застройщика не содержит целочисленный devId"
+            )
+        return developer_id
+
+    def _ensure_nashdom_context(self) -> None:
+        try:
+            current_url = self._driver.current_url
+        except WebDriverException as exc:
+            raise NashDomClientError(
+                "Не удалось проверить browser-context перед ERZ bulk fetch"
+            ) from exc
+
+        if urlsplit(current_url).netloc == urlsplit(_BASE_URL).netloc:
+            return
+
+        try:
+            self._driver.get(_BASE_URL)
+        except TimeoutException as exc:
+            raise NashDomUnavailableError(
+                "NashDom не ответил при подготовке browser-context для ERZ API"
+            ) from exc
+        except WebDriverException as exc:
+            error_text = str(exc).lower()
+            if "net::err_" in error_text or "timed out" in error_text or "timeout" in error_text:
+                raise NashDomUnavailableError(
+                    "Сетевая ошибка при подготовке browser-context для ERZ API"
+                ) from exc
+            raise NashDomClientError(
+                "Браузер не смог подготовить browser-context для ERZ API"
+            ) from exc
+
+        self._raise_if_unavailable_developer_page("подготовки ERZ API")
+
+    def _read_detail_developer(self, developer_id: int) -> Dict[str, Any]:
+        self._open_developer_detail(developer_id)
+        next_data = self._read_developer_next_data(developer_id)
+
+        props = next_data.get("props")
+        if not isinstance(props, dict):
+            raise NashDomClientError(
+                "В detail __NEXT_DATA__ застройщика отсутствует props"
+            )
+        props_mapping = cast(Dict[str, Any], props)
+        page_props = props_mapping.get("pageProps")
+        if not isinstance(page_props, dict):
+            raise NashDomClientError(
+                "В detail __NEXT_DATA__ застройщика отсутствует props.pageProps"
+            )
+        page_props_mapping = cast(Dict[str, Any], page_props)
+
+        if "statusCode" in page_props_mapping:
+            status_code = page_props_mapping["statusCode"]
+            if not isinstance(status_code, int) or isinstance(status_code, bool):
+                raise NashDomClientError(
+                    "props.pageProps.statusCode застройщика имеет неверный тип"
+                )
+            self._raise_for_http_status(
+                status_code,
+                next_data,
+                f"detail SSR застройщика {developer_id}",
+            )
+
+        if "id" in page_props_mapping:
+            page_developer_id = page_props_mapping["id"]
+            if (
+                not isinstance(page_developer_id, int)
+                or isinstance(page_developer_id, bool)
+                or page_developer_id != developer_id
+            ):
+                raise NashDomClientError(
+                    "props.pageProps.id не соответствует запрошенному застройщику "
+                    f"{developer_id}"
+                )
+
+        initial_state = props_mapping.get("initialState")
+        if not isinstance(initial_state, dict):
+            raise NashDomClientError(
+                "В detail __NEXT_DATA__ застройщика отсутствует props.initialState"
+            )
+        erz = cast(Dict[str, Any], initial_state).get("erz")
+        if not isinstance(erz, dict):
+            raise NashDomClientError(
+                "В detail __NEXT_DATA__ застройщика отсутствует initialState.erz"
+            )
+        builder_state = cast(Dict[str, Any], erz).get("builder")
+        if not isinstance(builder_state, dict):
+            raise NashDomClientError(
+                "В detail __NEXT_DATA__ застройщика отсутствует erz.builder"
+            )
+        raw_developer = cast(Dict[str, Any], builder_state).get("builder")
+        if not isinstance(raw_developer, dict):
+            raise NashDomClientError(
+                "В detail __NEXT_DATA__ застройщика отсутствует erz.builder.builder"
+            )
+
+        typed_raw_developer = cast(Dict[str, Any], raw_developer)
+        raw_developer_id = self._read_raw_developer_id(typed_raw_developer)
+        if raw_developer_id != developer_id:
+            raise NashDomClientError(
+                f"Detail SSR вернул devId={raw_developer_id} вместо {developer_id}"
+            )
+        return typed_raw_developer
+
+    def _open_developer_detail(self, developer_id: int) -> None:
+        try:
+            self._driver.get(f"{_BASE_URL}/developer/{developer_id}")
+        except TimeoutException as exc:
+            raise NashDomUnavailableError(
+                f"NashDom не ответил при открытии застройщика {developer_id}"
+            ) from exc
+        except WebDriverException as exc:
+            error_text = str(exc).lower()
+            if "net::err_" in error_text or "timed out" in error_text or "timeout" in error_text:
+                raise NashDomUnavailableError(
+                    f"Сетевая ошибка при открытии застройщика {developer_id}"
+                ) from exc
+            raise NashDomClientError(
+                f"Браузер не смог открыть страницу застройщика {developer_id}"
+            ) from exc
+
+        self._raise_if_unavailable_developer_page(f"застройщика {developer_id}")
+
+    def _raise_if_unavailable_developer_page(self, operation: str) -> None:
+        try:
+            page_text = f"{self._driver.title}\n{self._driver.page_source[:200000]}".lower()
+        except WebDriverException as exc:
+            raise NashDomClientError(
+                f"Не удалось проверить страницу NashDom во время {operation}"
+            ) from exc
+
+        if any(marker in page_text for marker in _SERVER_ERROR_MARKERS):
+            raise NashDomUnavailableError(
+                f"NashDom вернул серверную ошибку во время {operation}"
+            )
+        if any(marker in page_text for marker in _CHALLENGE_MARKERS):
+            raise NashDomUnavailableError(
+                f"NashDom показал anti-bot/challenge во время {operation}"
+            )
+
+    def _read_developer_next_data(self, developer_id: int) -> Dict[str, Any]:
+        try:
+            element = WebDriverWait(self._driver, _WAIT_TIMEOUT_SECONDS).until(
+                EC.presence_of_element_located((By.ID, "__NEXT_DATA__"))
+            )
+        except TimeoutException as exc:
+            raise NashDomClientError(
+                f"На странице застройщика {developer_id} не найден __NEXT_DATA__"
+            ) from exc
+
+        try:
+            raw_next_data: Optional[str] = element.get_attribute(  # pyright: ignore[reportUnknownMemberType]
+                "textContent"
+            )
+        except WebDriverException as exc:
+            raise NashDomClientError(
+                f"Не удалось прочитать __NEXT_DATA__ застройщика {developer_id}"
+            ) from exc
+        if not raw_next_data:
+            raise NashDomClientError(
+                f"__NEXT_DATA__ застройщика {developer_id} не содержит данных"
+            )
+
+        try:
+            next_data = json.loads(raw_next_data)
+        except json.JSONDecodeError as exc:
+            raise NashDomClientError(
+                f"Не удалось разобрать __NEXT_DATA__ застройщика {developer_id}"
+            ) from exc
+        if not isinstance(next_data, dict):
+            raise NashDomClientError(
+                f"__NEXT_DATA__ застройщика {developer_id} имеет неожиданный тип"
+            )
+        return cast(Dict[str, Any], next_data)
 
     def _get_region_objects(
         self,

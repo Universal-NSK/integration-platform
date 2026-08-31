@@ -5,6 +5,7 @@ from typing import Optional
 import pytest
 from nashdom_sync.contracts import (
     CommissioningPeriod,
+    ExtractedDeveloper,
     ExtractedObject,
     ExtractedObjectTypeEnum,
 )
@@ -25,6 +26,28 @@ def _extracted_object() -> ExtractedObject:
         object_type=ExtractedObjectTypeEnum.RESIDENTIAL,
         developer_id=38039,
         company_group_id=None,
+    )
+
+
+def _extracted_developer() -> ExtractedDeveloper:
+    return ExtractedDeveloper(
+        id=306,
+        short_name="2МЕН ГРУПП",
+        full_name="2МЕН ГРУПП ДЕВЕЛОПМЕНТ",
+        inn="7701651356",
+        kpp="720301001",
+        ogrn="1067746424899",
+        region_id=72,
+        legal_address="Тюменская область, Город Тюмень, Улица Республики дом 143А",
+        fact_address=(
+            "Тюменская обл, г.о. город Тюмень, г. Тюмень, "
+            "ул. Республики, д.143А"
+        ),
+        contact_name="Шулепов Петр Владимирович",
+        phone="+79091697719",
+        email="2men-group@mail.ru",
+        url="2mengroup.ru",
+        company_group_id=5776,
     )
 
 
@@ -86,3 +109,92 @@ def test_to_dict_serializes_value_object_date_and_enum_stably() -> None:
     assert result["publication_date"] == "2026-08-21"
     assert result["commissioning_period"] == "2028, квартал 4"
     assert result["object_type"] == "Жилое"
+
+
+def test_extracted_developer_accepts_valid_values() -> None:
+    developer = _extracted_developer()
+
+    assert developer.id == 306
+    assert developer.url == "2mengroup.ru"
+    assert developer.company_group_id == 5776
+
+
+@pytest.mark.parametrize(
+    "field_name, invalid_value",
+    [
+        ("id", 0),
+        ("id", True),
+        ("region_id", -1),
+        ("company_group_id", 0),
+    ],
+)
+def test_extracted_developer_rejects_invalid_positive_ids(
+    field_name: str,
+    invalid_value: object,
+) -> None:
+    with pytest.raises(ValueError):
+        replace(_extracted_developer(), **{field_name: invalid_value})
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "short_name",
+        "full_name",
+        "inn",
+        "kpp",
+        "ogrn",
+        "legal_address",
+        "fact_address",
+        "contact_name",
+        "phone",
+        "email",
+    ],
+)
+def test_extracted_developer_rejects_empty_required_text(field_name: str) -> None:
+    with pytest.raises(ValueError):
+        replace(_extracted_developer(), **{field_name: "  "})
+
+
+def test_extracted_developer_accepts_optional_none_values() -> None:
+    developer = replace(
+        _extracted_developer(),
+        url=None,
+        company_group_id=None,
+    )
+
+    assert developer.url is None
+    assert developer.company_group_id is None
+
+
+def test_extracted_developer_accepts_nonempty_url_and_rejects_empty_url() -> None:
+    assert replace(_extracted_developer(), url="example.test").url == "example.test"
+
+    with pytest.raises(ValueError):
+        replace(_extracted_developer(), url="  ")
+
+
+def test_extracted_developer_to_dict_is_stable() -> None:
+    result = _extracted_developer().to_dict()
+
+    assert result == {
+        "id": 306,
+        "short_name": "2МЕН ГРУПП",
+        "full_name": "2МЕН ГРУПП ДЕВЕЛОПМЕНТ",
+        "inn": "7701651356",
+        "kpp": "720301001",
+        "ogrn": "1067746424899",
+        "region_id": 72,
+        "legal_address": (
+            "Тюменская область, Город Тюмень, Улица Республики дом 143А"
+        ),
+        "fact_address": (
+            "Тюменская обл, г.о. город Тюмень, г. Тюмень, "
+            "ул. Республики, д.143А"
+        ),
+        "contact_name": "Шулепов Петр Владимирович",
+        "phone": "+79091697719",
+        "email": "2men-group@mail.ru",
+        "url": "2mengroup.ru",
+        "company_group_id": 5776,
+    }

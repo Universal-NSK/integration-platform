@@ -8,6 +8,10 @@ def _is_positive_integer(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
+def _is_non_empty_string(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
 @dataclass(frozen=True)
 class BaseExtractedDataclass:
     """Базовая сериализация канонических данных Extract."""
@@ -111,9 +115,60 @@ class ExtractedObject(BaseExtractedDataclass):
 
 
 @dataclass(frozen=True)
+class ExtractedDeveloper(BaseExtractedDataclass):
+    """Канонический застройщик из внешнего источника."""
+
+    id: int
+    short_name: str
+    full_name: str
+    inn: str
+    kpp: str
+    ogrn: str
+    region_id: int
+    legal_address: str
+    fact_address: str
+    contact_name: str
+    phone: str
+    email: str
+    url: Optional[str]
+    company_group_id: Optional[int]
+
+    def __post_init__(self) -> None:
+        if not _is_positive_integer(self.id):
+            raise ValueError("ID застройщика должен быть положительным целым числом")
+
+        required_text_fields = (
+            ("Краткое наименование застройщика", self.short_name),
+            ("Полное наименование застройщика", self.full_name),
+            ("ИНН застройщика", self.inn),
+            ("КПП застройщика", self.kpp),
+            ("ОГРН застройщика", self.ogrn),
+            ("Юридический адрес застройщика", self.legal_address),
+            ("Фактический адрес застройщика", self.fact_address),
+            ("Контактное лицо застройщика", self.contact_name),
+            ("Телефон застройщика", self.phone),
+            ("Email застройщика", self.email),
+        )
+        for field_name, value in required_text_fields:
+            if not _is_non_empty_string(value):
+                raise ValueError(f"{field_name} не должно быть пустым")
+
+        if not _is_positive_integer(self.region_id):
+            raise ValueError("ID региона должен быть положительным целым числом")
+        if self.url is not None and not _is_non_empty_string(self.url):
+            raise ValueError("URL застройщика должен быть непустой строкой или None")
+        if self.company_group_id is not None and not _is_positive_integer(
+            self.company_group_id
+        ):
+            raise ValueError(
+                "ID группы компаний должен быть положительным целым числом или None"
+            )
+
+
+@dataclass(frozen=True)
 class ExtractResult(BaseExtractedDataclass):
     """Полный результат Extract; публичный сервис пока его не формирует."""
 
     objects: List[ExtractedObject]
-    developers: List[BaseExtractedDataclass]
+    developers: List[ExtractedDeveloper]
     company_groups: List[BaseExtractedDataclass]

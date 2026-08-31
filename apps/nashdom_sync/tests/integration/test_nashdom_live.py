@@ -1,10 +1,11 @@
 import os
 from pathlib import Path
-from typing import List
+from typing import Any, Dict, List
 
 import pytest
 from nashdom_sync.contracts import (
     BrowserSettings,
+    ExtractedDeveloper,
     ExtractedObject,
     NashDomExtractSettings,
     NashDomRegion,
@@ -95,3 +96,40 @@ def test_live_xhr_path_returns_typed_objects() -> None:
     assert 21 <= len(objects) <= limit
     assert all(isinstance(extracted_object, ExtractedObject) for extracted_object in objects)
     assert all(extracted_object.region_id == _RESEARCH_REGION.code for extracted_object in objects)
+
+
+@pytest.mark.browser
+@pytest.mark.nashdom_live
+def test_live_bulk_developers_returns_confirmed_records(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    driver = BrowserProvider().provide(_live_browser_settings())
+    client = NashDomClient(driver)
+
+    def fail_if_detail_fallback_runs(developer_id: int) -> Dict[str, Any]:
+        pytest.fail(
+            "Подтверждённые застройщики должны находиться primary bulk-путём, "
+            f"но запущен detail fallback для {developer_id}"
+        )
+
+    monkeypatch.setattr(client, "_read_detail_developer", fail_if_detail_fallback_runs)
+    try:
+        try:
+            client.get_objects(
+                NashDomExtractSettings(
+                    objects_to_parse_count=1,
+                    regions=(_RESEARCH_REGION,),
+                )
+            )
+            developers = client.get_developers({306, 16750})
+        except NashDomUnavailableError as exc:
+            pytest.skip(f"наш.дом.рф временно недоступен: {exc}")
+    finally:
+        driver.quit()
+
+    assert len(developers) == 2
+    assert all(isinstance(developer, ExtractedDeveloper) for developer in developers)
+    assert {developer.id for developer in developers} == {306, 16750}
+    developers_by_id = {developer.id: developer for developer in developers}
+    assert developers_by_id[16750].inn == "2308288843"
+    assert developers_by_id[306].company_group_id == 5776

@@ -6,6 +6,7 @@ from typing import Any, Dict, cast
 import pytest
 from nashdom_sync.contracts import (
     CommissioningPeriod,
+    ExtractedDeveloper,
     ExtractedObject,
     ExtractedObjectTypeEnum,
 )
@@ -19,6 +20,56 @@ def _fixture(name: str) -> Dict[str, Any]:
     raw = json.loads((_FIXTURES / name).read_text(encoding="utf-8"))
     assert isinstance(raw, dict)
     return cast(Dict[str, Any], raw)
+
+
+def _raw_developer_306() -> Dict[str, Any]:
+    return {
+        "devId": 306,
+        "devShortCleanNm": "2МЕН ГРУПП",
+        "devFullCleanNm": "2МЕН ГРУПП ДЕВЕЛОПМЕНТ",
+        "devInn": "7701651356",
+        "devKpp": "720301001",
+        "devOgrn": "1067746424899",
+        "devOrgRegRegionCd": 72,
+        "devLegalAddr": (
+            "Тюменская область, Город Тюмень, Улица Республики дом 143А"
+        ),
+        "devFactAddr": (
+            "Тюменская обл, г.о. город Тюмень, г. Тюмень, "
+            "ул. Республики, д.143А"
+        ),
+        "devEmplMainFullNm": "Шулепов Петр Владимирович",
+        "devPhoneNum": "+79091697719",
+        "devEmail": "2men-group@mail.ru",
+        "devSite": "2mengroup.ru",
+        "companyGroupId": 5776,
+    }
+
+
+def _raw_developer_16750() -> Dict[str, Any]:
+    return {
+        "devId": 16750,
+        "devShortCleanNm": "CЗ ФЕМИЛИ РЕЗОРТ НЕБУГ",
+        "devFullCleanNm": (
+            "СПЕЦИАЛИЗИРОВАННЫЙ ЗАСТРОЙЩИК ФЕМИЛИ РЕЗОРТ НЕБУГ"
+        ),
+        "devInn": "2308288843",
+        "devKpp": "230801001",
+        "devOgrn": "1222300064931",
+        "devOrgRegRegionCd": 23,
+        "devLegalAddr": (
+            "Краснодарский край, город Краснодар, улица Северная дом д191 "
+            "помещение помещ38офис12"
+        ),
+        "devFactAddr": (
+            "Краснодарский край, Краснодар, Северная, д.д191, "
+            "пом.помещ38офис12"
+        ),
+        "devEmplMainFullNm": "Овчинников Михаил Юрьевич",
+        "devPhoneNum": "+79889574354",
+        "devEmail": "metrix.maisky@yandex.ru",
+        "devSite": "metriks.ru",
+    }
 
 
 def test_normalizes_xhr_fixture_to_expected_object() -> None:
@@ -194,3 +245,98 @@ def test_normalizes_confirmed_ssr_company_group_path() -> None:
     result = NashDomDataNormalizer().normalize_objects([raw_object])[0]
 
     assert result.company_group_id == 9315
+
+
+def test_normalizes_real_developer_examples_to_exact_canonical_mapping() -> None:
+    result = NashDomDataNormalizer().normalize_developers(
+        [_raw_developer_306(), _raw_developer_16750()]
+    )
+
+    assert result == [
+        ExtractedDeveloper(
+            id=306,
+            short_name="2МЕН ГРУПП",
+            full_name="2МЕН ГРУПП ДЕВЕЛОПМЕНТ",
+            inn="7701651356",
+            kpp="720301001",
+            ogrn="1067746424899",
+            region_id=72,
+            legal_address=(
+                "Тюменская область, Город Тюмень, Улица Республики дом 143А"
+            ),
+            fact_address=(
+                "Тюменская обл, г.о. город Тюмень, г. Тюмень, "
+                "ул. Республики, д.143А"
+            ),
+            contact_name="Шулепов Петр Владимирович",
+            phone="+79091697719",
+            email="2men-group@mail.ru",
+            url="2mengroup.ru",
+            company_group_id=5776,
+        ),
+        ExtractedDeveloper(
+            id=16750,
+            short_name="CЗ ФЕМИЛИ РЕЗОРТ НЕБУГ",
+            full_name=(
+                "СПЕЦИАЛИЗИРОВАННЫЙ ЗАСТРОЙЩИК ФЕМИЛИ РЕЗОРТ НЕБУГ"
+            ),
+            inn="2308288843",
+            kpp="230801001",
+            ogrn="1222300064931",
+            region_id=23,
+            legal_address=(
+                "Краснодарский край, город Краснодар, улица Северная дом д191 "
+                "помещение помещ38офис12"
+            ),
+            fact_address=(
+                "Краснодарский край, Краснодар, Северная, д.д191, "
+                "пом.помещ38офис12"
+            ),
+            contact_name="Овчинников Михаил Юрьевич",
+            phone="+79889574354",
+            email="metrix.maisky@yandex.ru",
+            url="metriks.ru",
+            company_group_id=None,
+        ),
+    ]
+    assert result[1].short_name.startswith("CЗ")
+
+
+@pytest.mark.parametrize("site_state", ["missing", "null"])
+def test_missing_or_null_developer_site_normalizes_to_none(site_state: str) -> None:
+    raw_developer = _raw_developer_306()
+    if site_state == "missing":
+        del raw_developer["devSite"]
+    else:
+        raw_developer["devSite"] = None
+
+    result = NashDomDataNormalizer().normalize_developers([raw_developer])[0]
+
+    assert result.url is None
+
+
+@pytest.mark.parametrize("invalid_site", [123, [], {}, "  "])
+def test_invalid_optional_developer_site_is_normalization_error(
+    invalid_site: object,
+) -> None:
+    raw_developer = _raw_developer_306()
+    raw_developer["devSite"] = invalid_site
+
+    with pytest.raises(NashDomNormalizationError, match="URL застройщика"):
+        NashDomDataNormalizer().normalize_developers([raw_developer])
+
+
+def test_missing_required_developer_field_is_normalization_error() -> None:
+    raw_developer = _raw_developer_306()
+    del raw_developer["devInn"]
+
+    with pytest.raises(NashDomNormalizationError, match="обязательное поле"):
+        NashDomDataNormalizer().normalize_developers([raw_developer])
+
+
+def test_invalid_required_developer_type_is_normalization_error() -> None:
+    raw_developer = _raw_developer_306()
+    raw_developer["devOrgRegRegionCd"] = "72"
+
+    with pytest.raises(NashDomNormalizationError, match="целым числом"):
+        NashDomDataNormalizer().normalize_developers([raw_developer])

@@ -3,6 +3,7 @@ from typing import List, Set
 from selenium.webdriver.remote.webdriver import WebDriver
 
 from nashdom_sync.contracts import (
+    ExtractedDeveloper,
     ExtractedObject,
     ExtractionSettings,
     ExtractResult,
@@ -20,14 +21,17 @@ class ExtractService:
         driver: WebDriver,
         settings: ExtractionSettings,
     ) -> ExtractResult:
-        """Выполнить доступный object-stage и явно остановить неполный Extract."""
+        """Выполнить object/developer stages и явно остановить неполный Extract."""
         client = NashDomClient(driver)
         validator = SourceDataValidator()
         objects = self._extract_objects(client, validator, settings.nashdom)
-        self._collect_developer_ids(objects)
+        developer_ids = self._collect_developer_ids(objects)
+        developers = self._extract_developers(client, validator, developer_ids)
+        validator.validate_company_group_consistency(objects, developers)
+        self._collect_company_group_ids(objects, developers)
 
         raise NotImplementedError(
-            "Object-stage завершён, но извлечение застройщиков и групп компаний "
+            "Object-stage и developer-stage завершены, но извлечение групп компаний "
             "ещё не реализовано"
         )
 
@@ -47,3 +51,27 @@ class ExtractService:
     @staticmethod
     def _collect_developer_ids(objects: List[ExtractedObject]) -> Set[int]:
         return {extracted_object.developer_id for extracted_object in objects}
+
+    @staticmethod
+    def _extract_developers(
+        client: NashDomClient,
+        validator: SourceDataValidator,
+        developer_ids: Set[int],
+    ) -> List[ExtractedDeveloper]:
+        developers = client.get_developers(developer_ids)
+        validator.validate_developers(developers, developer_ids)
+        return developers
+
+    @staticmethod
+    def _collect_company_group_ids(
+        objects: List[ExtractedObject],
+        developers: List[ExtractedDeveloper],
+    ) -> Set[int]:
+        return {
+            company_group_id
+            for company_group_id in (
+                [extracted_object.company_group_id for extracted_object in objects]
+                + [developer.company_group_id for developer in developers]
+            )
+            if company_group_id is not None
+        }
