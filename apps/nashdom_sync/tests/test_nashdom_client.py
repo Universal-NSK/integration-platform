@@ -437,6 +437,35 @@ def test_developer_api_url_has_confirmed_filters_and_pagination() -> None:
     assert "objStatus=0" in result
 
 
+def test_developer_detail_url_uses_confirmed_nashdom_route() -> None:
+    result = NashDomClient._build_developer_detail_url(  # pyright: ignore[reportPrivateUsage]
+        306
+    )
+
+    assert result == (
+        "https://xn--80az8a.xn--d1aqf.xn--p1ai/"
+        "сервисы/единый-реестр-застройщиков/застройщик/306"
+    )
+    assert "/сервисы/единый-реестр-застройщиков/застройщик/306" in result
+    assert "/developer/306" not in result
+
+
+def test_open_developer_detail_uses_confirmed_nashdom_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, driver = _client()
+    check_page = Mock()
+    monkeypatch.setattr(client, "_raise_if_unavailable_developer_page", check_page)
+
+    client._open_developer_detail(306)  # pyright: ignore[reportPrivateUsage]
+
+    driver.get.assert_called_once_with(
+        "https://xn--80az8a.xn--d1aqf.xn--p1ai/"
+        "сервисы/единый-реестр-застройщиков/застройщик/306"
+    )
+    check_page.assert_called_once_with("застройщика 306")
+
+
 @pytest.mark.parametrize(
     "body, expected_message",
     [

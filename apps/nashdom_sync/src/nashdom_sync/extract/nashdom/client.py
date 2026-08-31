@@ -389,6 +389,13 @@ class NashDomClient:
         return f"{_BASE_URL}{_DEVELOPER_API_PATH}?{query}"
 
     @staticmethod
+    def _build_developer_detail_url(developer_id: int) -> str:
+        return (
+            f"{_BASE_URL}/сервисы/единый-реестр-застройщиков/"
+            f"застройщик/{developer_id}"
+        )
+
+    @staticmethod
     def _read_raw_developer_id(raw_developer: Dict[str, Any]) -> int:
         developer_id = raw_developer.get("devId")
         if not isinstance(developer_id, int) or isinstance(developer_id, bool):
@@ -498,7 +505,7 @@ class NashDomClient:
 
     def _open_developer_detail(self, developer_id: int) -> None:
         try:
-            self._driver.get(f"{_BASE_URL}/developer/{developer_id}")
+            self._driver.get(self._build_developer_detail_url(developer_id))
         except TimeoutException as exc:
             raise NashDomUnavailableError(
                 f"NashDom не ответил при открытии застройщика {developer_id}"
