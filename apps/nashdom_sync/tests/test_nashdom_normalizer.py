@@ -6,6 +6,7 @@ from typing import Any, Dict, cast
 import pytest
 from nashdom_sync.contracts import (
     CommissioningPeriod,
+    ExtractedCompanyGroup,
     ExtractedDeveloper,
     ExtractedObject,
     ExtractedObjectTypeEnum,
@@ -69,6 +70,23 @@ def _raw_developer_16750() -> Dict[str, Any]:
         "devPhoneNum": "+79889574354",
         "devEmail": "metrix.maisky@yandex.ru",
         "devSite": "metriks.ru",
+    }
+
+
+def _raw_company_group_5776() -> Dict[str, Any]:
+    return {
+        "devGroupId": 5776,
+        "name": "2МЕН ГРУПП ДЕВЕЛОПМЕНТ",
+        "regionHD": [{"id": 72, "name": "Тюменская область"}],
+        "devCnt": 1,
+    }
+
+
+def _raw_company_group_6442() -> Dict[str, Any]:
+    return {
+        "devGroupId": 6442,
+        "name": "АРХСТРОЙ ГРУПП",
+        "regionHD": [{"id": 2, "name": "Республика Башкортостан"}],
     }
 
 
@@ -340,3 +358,65 @@ def test_invalid_required_developer_type_is_normalization_error() -> None:
 
     with pytest.raises(NashDomNormalizationError, match="целым числом"):
         NashDomDataNormalizer().normalize_developers([raw_developer])
+
+
+def test_normalizes_company_groups_to_exact_canonical_mapping() -> None:
+    raw_first = _raw_company_group_5776()
+    raw_first["name"] = "  2МЕН ГРУПП ДЕВЕЛОПМЕНТ  "
+
+    result = NashDomDataNormalizer().normalize_company_groups(
+        [raw_first, _raw_company_group_6442()]
+    )
+
+    assert result == [
+        ExtractedCompanyGroup(id=5776, name="2МЕН ГРУПП ДЕВЕЛОПМЕНТ"),
+        ExtractedCompanyGroup(id=6442, name="АРХСТРОЙ ГРУПП"),
+    ]
+    assert result[0].to_dict() == {
+        "id": 5776,
+        "name": "2МЕН ГРУПП ДЕВЕЛОПМЕНТ",
+    }
+
+
+def test_missing_company_group_id_is_normalization_error() -> None:
+    raw_company_group = _raw_company_group_5776()
+    del raw_company_group["devGroupId"]
+
+    with pytest.raises(NashDomNormalizationError, match="обязательное поле"):
+        NashDomDataNormalizer().normalize_company_groups([raw_company_group])
+
+
+@pytest.mark.parametrize("invalid_id", ["5776", True])
+def test_invalid_company_group_id_is_normalization_error(invalid_id: object) -> None:
+    raw_company_group = _raw_company_group_5776()
+    raw_company_group["devGroupId"] = invalid_id
+
+    with pytest.raises(NashDomNormalizationError, match="целым числом"):
+        NashDomDataNormalizer().normalize_company_groups([raw_company_group])
+
+
+@pytest.mark.parametrize("invalid_name", [None, "", "  ", 123, [], {}])
+def test_invalid_company_group_name_is_normalization_error(
+    invalid_name: object,
+) -> None:
+    raw_company_group = _raw_company_group_5776()
+    raw_company_group["name"] = invalid_name
+
+    with pytest.raises(NashDomNormalizationError):
+        NashDomDataNormalizer().normalize_company_groups([raw_company_group])
+
+
+def test_missing_company_group_name_is_normalization_error() -> None:
+    raw_company_group = _raw_company_group_5776()
+    del raw_company_group["name"]
+
+    with pytest.raises(NashDomNormalizationError, match="обязательное поле"):
+        NashDomDataNormalizer().normalize_company_groups([raw_company_group])
+
+
+def test_non_positive_company_group_id_contract_error_is_wrapped() -> None:
+    raw_company_group = _raw_company_group_5776()
+    raw_company_group["devGroupId"] = 0
+
+    with pytest.raises(NashDomNormalizationError, match="нарушает контракт"):
+        NashDomDataNormalizer().normalize_company_groups([raw_company_group])

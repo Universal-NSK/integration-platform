@@ -3,6 +3,7 @@ from typing import List, Set
 from selenium.webdriver.remote.webdriver import WebDriver
 
 from nashdom_sync.contracts import (
+    ExtractedCompanyGroup,
     ExtractedDeveloper,
     ExtractedObject,
     ExtractionSettings,
@@ -21,18 +22,24 @@ class ExtractService:
         driver: WebDriver,
         settings: ExtractionSettings,
     ) -> ExtractResult:
-        """Выполнить object/developer stages и явно остановить неполный Extract."""
+        """Выполнить все стадии Extract и вернуть канонический результат."""
         client = NashDomClient(driver)
         validator = SourceDataValidator()
         objects = self._extract_objects(client, validator, settings.nashdom)
         developer_ids = self._collect_developer_ids(objects)
         developers = self._extract_developers(client, validator, developer_ids)
         validator.validate_company_group_consistency(objects, developers)
-        self._collect_company_group_ids(objects, developers)
+        company_group_ids = self._collect_company_group_ids(objects, developers)
+        company_groups = self._extract_company_groups(
+            client,
+            validator,
+            company_group_ids,
+        )
 
-        raise NotImplementedError(
-            "Object-stage и developer-stage завершены, но извлечение групп компаний "
-            "ещё не реализовано"
+        return ExtractResult(
+            objects=objects,
+            developers=developers,
+            company_groups=company_groups,
         )
 
     @staticmethod
@@ -61,6 +68,16 @@ class ExtractService:
         developers = client.get_developers(developer_ids)
         validator.validate_developers(developers, developer_ids)
         return developers
+
+    @staticmethod
+    def _extract_company_groups(
+        client: NashDomClient,
+        validator: SourceDataValidator,
+        company_group_ids: Set[int],
+    ) -> List[ExtractedCompanyGroup]:
+        company_groups = client.get_company_groups(company_group_ids)
+        validator.validate_company_groups(company_groups, company_group_ids)
+        return company_groups
 
     @staticmethod
     def _collect_company_group_ids(

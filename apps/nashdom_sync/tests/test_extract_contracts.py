@@ -5,9 +5,11 @@ from typing import Optional
 import pytest
 from nashdom_sync.contracts import (
     CommissioningPeriod,
+    ExtractedCompanyGroup,
     ExtractedDeveloper,
     ExtractedObject,
     ExtractedObjectTypeEnum,
+    ExtractResult,
 )
 
 
@@ -48,6 +50,13 @@ def _extracted_developer() -> ExtractedDeveloper:
         email="2men-group@mail.ru",
         url="2mengroup.ru",
         company_group_id=5776,
+    )
+
+
+def _extracted_company_group() -> ExtractedCompanyGroup:
+    return ExtractedCompanyGroup(
+        id=5776,
+        name="2МЕН ГРУПП ДЕВЕЛОПМЕНТ",
     )
 
 
@@ -198,3 +207,41 @@ def test_extracted_developer_to_dict_is_stable() -> None:
         "url": "2mengroup.ru",
         "company_group_id": 5776,
     }
+
+
+def test_extracted_company_group_accepts_valid_values() -> None:
+    company_group = _extracted_company_group()
+
+    assert company_group.id == 5776
+    assert company_group.name == "2МЕН ГРУПП ДЕВЕЛОПМЕНТ"
+
+
+@pytest.mark.parametrize("invalid_id", [0, -1, True])
+def test_extracted_company_group_rejects_invalid_id(invalid_id: object) -> None:
+    with pytest.raises(ValueError):
+        replace(_extracted_company_group(), id=invalid_id)
+
+
+@pytest.mark.parametrize("invalid_name", ["", "  "])
+def test_extracted_company_group_rejects_empty_name(invalid_name: str) -> None:
+    with pytest.raises(ValueError):
+        replace(_extracted_company_group(), name=invalid_name)
+
+
+def test_extracted_company_group_to_dict_is_stable() -> None:
+    assert _extracted_company_group().to_dict() == {
+        "id": 5776,
+        "name": "2МЕН ГРУПП ДЕВЕЛОПМЕНТ",
+    }
+
+
+def test_extract_result_serializes_typed_company_groups() -> None:
+    result = ExtractResult(
+        objects=[_extracted_object()],
+        developers=[_extracted_developer()],
+        company_groups=[_extracted_company_group()],
+    )
+
+    assert result.to_dict()["company_groups"] == [
+        {"id": 5776, "name": "2МЕН ГРУПП ДЕВЕЛОПМЕНТ"}
+    ]

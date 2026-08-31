@@ -1,8 +1,12 @@
-from typing import Any, Dict, Tuple, cast
+from typing import Any, Dict, List, Tuple, cast
 from unittest.mock import Mock
 
 import pytest
-from nashdom_sync.contracts import NashDomExtractSettings, NashDomRegion
+from nashdom_sync.contracts import (
+    ExtractedCompanyGroup,
+    NashDomExtractSettings,
+    NashDomRegion,
+)
 from nashdom_sync.extract import NashDomClientError, NashDomUnavailableError
 from nashdom_sync.extract.nashdom.client import (
     _INSTALL_INTERCEPTOR_SCRIPT,  # pyright: ignore[reportPrivateUsage]
@@ -44,6 +48,15 @@ def _raw_developer(developer_id: int) -> Dict[str, Any]:
         "devPhoneNum": "+70000000000",
         "devEmail": "developer@example.test",
         "devSite": None,
+    }
+
+
+def _raw_company_group(company_group_id: int) -> Dict[str, Any]:
+    return {
+        "devGroupId": company_group_id,
+        "name": f"Группа компаний {company_group_id}",
+        "regionHD": [{"id": 72, "name": "Тюменская область"}],
+        "devCnt": 1,
     }
 
 
@@ -668,3 +681,298 @@ def test_detail_ssr_rejects_mismatching_builder_developer_id(
 
     with pytest.raises(NashDomClientError, match="devId=999 вместо 306"):
         client._read_detail_developer(306)  # pyright: ignore[reportPrivateUsage]
+
+
+def test_empty_company_group_ids_return_without_browser_calls() -> None:
+    client, driver = _client()
+
+    result = client.get_company_groups(set())
+
+    assert result == []
+    driver.set_page_load_timeout.assert_not_called()
+    driver.set_script_timeout.assert_not_called()
+    driver.execute_async_script.assert_not_called()
+    driver.get.assert_not_called()
+
+
+def test_company_group_primary_fetches_sorted_ids_and_returns_stable_result() -> None:
+    client, driver = _client()
+    requested_urls: List[str] = []
+
+    def fetch(script: str, url: str) -> Dict[str, Any]:
+        requested_urls.append(url)
+        company_group_id = int(url.rsplit("/", 1)[1])
+        return {
+            "status": 200,
+            "body": {
+                "errcode": "0",
+                "data": _raw_company_group(company_group_id),
+            },
+        }
+
+    driver.execute_async_script.side_effect = fetch
+
+    result = client.get_company_groups({6442, 5776})
+
+    assert result == [
+        ExtractedCompanyGroup(id=5776, name="Группа компаний 5776"),
+        ExtractedCompanyGroup(id=6442, name="Группа компаний 6442"),
+    ]
+    assert requested_urls == [
+        "https://xn--80az8a.xn--d1aqf.xn--p1ai/сервисы/api/erz/deverz/company/5776",
+        "https://xn--80az8a.xn--d1aqf.xn--p1ai/сервисы/api/erz/deverz/company/6442",
+    ]
+    driver.get.assert_not_called()
+
+
+def test_company_group_primary_rejects_mismatching_id() -> None:
+    client, driver = _client()
+    driver.execute_async_script.return_value = {
+        "status": 200,
+        "body": {"errcode": "0", "data": _raw_company_group(6442)},
+    }
+
+    with pytest.raises(NashDomClientError, match="devGroupId=6442 вместо 5776"):
+        client.get_company_groups({5776})
+
+
+@pytest.mark.parametrize(
+    "body, expected_message",
+    [
+        ({"errcode": "1", "data": {}}, "errcode"),
+        ({"errcode": "0", "data": []}, "объект data"),
+        ({"errcode": "0", "data": {"name": "Без ID"}}, "devGroupId"),
+    ],
+)
+def test_malformed_company_group_primary_schema_is_client_error(
+    body: Dict[str, Any],
+    expected_message: str,
+) -> None:
+    client, driver = _client()
+    driver.execute_async_script.return_value = {"status": 200, "body": body}
+
+    with pytest.raises(NashDomClientError, match=expected_message):
+        client.get_company_groups({5776})
+
+
+def test_company_group_missing_primary_uses_detail_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, driver = _client()
+    driver.execute_async_script.return_value = {
+        "status": 200,
+        "body": {
+            "errcode": "0",
+            "data": {"code": "404", "message": "Не найдено"},
+        },
+    }
+    read_detail = Mock(return_value=_raw_company_group(5776))
+    monkeypatch.setattr(client, "_read_detail_company_group", read_detail)
+
+    result = client.get_company_groups({5776})
+
+    assert result == [
+        ExtractedCompanyGroup(id=5776, name="Группа компаний 5776")
+    ]
+    read_detail.assert_called_once_with(5776)
+
+
+def test_company_group_fallback_runs_only_for_missing_primary_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, driver = _client()
+
+    def fetch(script: str, url: str) -> Dict[str, Any]:
+        company_group_id = int(url.rsplit("/", 1)[1])
+        data = (
+            _raw_company_group(company_group_id)
+            if company_group_id == 5776
+            else {"code": "404", "message": "Не найдено"}
+        )
+        return {"status": 200, "body": {"errcode": "0", "data": data}}
+
+    driver.execute_async_script.side_effect = fetch
+    read_detail = Mock(return_value=_raw_company_group(6442))
+    monkeypatch.setattr(client, "_read_detail_company_group", read_detail)
+
+    result = client.get_company_groups({6442, 5776})
+
+    assert [company_group.id for company_group in result] == [5776, 6442]
+    read_detail.assert_called_once_with(6442)
+
+
+@pytest.mark.parametrize("status", [429, 500, 503])
+def test_company_group_unavailable_http_is_unavailable(status: int) -> None:
+    client, driver = _client()
+    driver.execute_async_script.return_value = {"status": status, "body": {}}
+
+    with pytest.raises(NashDomUnavailableError):
+        client.get_company_groups({5776})
+
+
+def test_company_group_timeout_is_unavailable() -> None:
+    client, driver = _client()
+    driver.execute_async_script.side_effect = TimeoutException()
+
+    with pytest.raises(NashDomUnavailableError):
+        client.get_company_groups({5776})
+
+
+def test_company_group_http_200_challenge_is_unavailable() -> None:
+    client, driver = _client()
+    driver.execute_async_script.return_value = {
+        "status": 200,
+        "body": "<!DOCTYPE html><div class='captcha-container'></div>",
+    }
+
+    with pytest.raises(NashDomUnavailableError, match="anti-bot/challenge"):
+        client.get_company_groups({5776})
+
+
+def test_company_group_detail_url_uses_confirmed_cyrillic_route() -> None:
+    result = NashDomClient._build_company_group_detail_url(  # pyright: ignore[reportPrivateUsage]
+        5776
+    )
+
+    assert result == (
+        "https://xn--80az8a.xn--d1aqf.xn--p1ai/"
+        "сервисы/единый-реестр-застройщиков/группа-компаний/5776"
+    )
+
+
+def test_open_company_group_detail_uses_confirmed_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, driver = _client()
+    check_page = Mock()
+    monkeypatch.setattr(client, "_raise_if_unavailable_developer_page", check_page)
+
+    client._open_company_group_detail(5776)  # pyright: ignore[reportPrivateUsage]
+
+    driver.get.assert_called_once_with(
+        "https://xn--80az8a.xn--d1aqf.xn--p1ai/"
+        "сервисы/единый-реестр-застройщиков/группа-компаний/5776"
+    )
+    check_page.assert_called_once_with("группы компаний 5776")
+
+
+def test_company_group_detail_ssr_extracts_confirmed_info_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, _ = _client()
+    raw_company_group = _raw_company_group(5776)
+    next_data = {
+        "props": {
+            "pageProps": {"statusCode": 200, "id": "5776"},
+            "initialState": {
+                "erz": {"companyGroup": {"info": raw_company_group}}
+            },
+        },
+        "query": {"id": "5776"},
+    }
+    open_detail = Mock()
+    monkeypatch.setattr(client, "_open_company_group_detail", open_detail)
+    monkeypatch.setattr(
+        client,
+        "_read_company_group_next_data",
+        Mock(return_value=next_data),
+    )
+
+    result = client._read_detail_company_group(5776)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == raw_company_group
+    open_detail.assert_called_once_with(5776)
+
+
+@pytest.mark.parametrize(
+    "page_id, query_id",
+    [("9999", "5776"), ("5776", "9999")],
+)
+def test_company_group_detail_ssr_rejects_mismatching_route_id(
+    monkeypatch: pytest.MonkeyPatch,
+    page_id: str,
+    query_id: str,
+) -> None:
+    client, _ = _client()
+    next_data = {
+        "props": {
+            "pageProps": {"id": page_id},
+            "initialState": {
+                "erz": {"companyGroup": {"info": _raw_company_group(5776)}}
+            },
+        },
+        "query": {"id": query_id},
+    }
+    monkeypatch.setattr(client, "_open_company_group_detail", Mock())
+    monkeypatch.setattr(
+        client,
+        "_read_company_group_next_data",
+        Mock(return_value=next_data),
+    )
+
+    with pytest.raises(NashDomClientError, match="не соответствует"):
+        client._read_detail_company_group(5776)  # pyright: ignore[reportPrivateUsage]
+
+
+def test_company_group_detail_ssr_rejects_mismatching_info_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, _ = _client()
+    next_data = {
+        "props": {
+            "pageProps": {"id": "5776"},
+            "initialState": {
+                "erz": {"companyGroup": {"info": _raw_company_group(6442)}}
+            },
+        }
+    }
+    monkeypatch.setattr(client, "_open_company_group_detail", Mock())
+    monkeypatch.setattr(
+        client,
+        "_read_company_group_next_data",
+        Mock(return_value=next_data),
+    )
+
+    with pytest.raises(NashDomClientError, match="devGroupId=6442 вместо 5776"):
+        client._read_detail_company_group(5776)  # pyright: ignore[reportPrivateUsage]
+
+
+def test_company_group_detail_ssr_requires_info(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, _ = _client()
+    next_data: Dict[str, Any] = {
+        "props": {
+            "pageProps": {"id": "5776"},
+            "initialState": {"erz": {"companyGroup": {}}},
+        }
+    }
+    monkeypatch.setattr(client, "_open_company_group_detail", Mock())
+    monkeypatch.setattr(
+        client,
+        "_read_company_group_next_data",
+        Mock(return_value=next_data),
+    )
+
+    with pytest.raises(NashDomClientError, match="erz.companyGroup.info"):
+        client._read_detail_company_group(5776)  # pyright: ignore[reportPrivateUsage]
+
+
+def test_company_group_detail_404_remains_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, _ = _client()
+    next_data: Dict[str, Any] = {
+        "props": {
+            "pageProps": {"statusCode": 404, "id": "5776"},
+            "initialState": {"erz": {"companyGroup": {}}},
+        }
+    }
+    monkeypatch.setattr(client, "_open_company_group_detail", Mock())
+    monkeypatch.setattr(
+        client,
+        "_read_company_group_next_data",
+        Mock(return_value=next_data),
+    )
+
+    assert client._read_detail_company_group(5776) is None  # pyright: ignore[reportPrivateUsage]

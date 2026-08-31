@@ -7,6 +7,7 @@ import nashdom_sync.extract.service as service_module
 import pytest
 from nashdom_sync.contracts import (
     CommissioningPeriod,
+    ExtractedCompanyGroup,
     ExtractedDeveloper,
     ExtractedObject,
     ExtractedObjectTypeEnum,
@@ -69,24 +70,36 @@ def _developer(
     )
 
 
-def test_extract_runs_object_stage_but_does_not_return_false_full_result(
+def _company_group(company_group_id: int = 5776) -> ExtractedCompanyGroup:
+    return ExtractedCompanyGroup(
+        id=company_group_id,
+        name=f"Группа компаний {company_group_id}",
+    )
+
+
+def test_extract_returns_full_typed_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = Mock()
     client.get_objects.return_value = [_object()]
     client.get_developers.return_value = [_developer()]
+    client.get_company_groups.return_value = []
     client_type = Mock(return_value=client)
     monkeypatch.setattr(service_module, "NashDomClient", client_type)
     driver_mock = Mock()
     driver = cast(WebDriver, driver_mock)
 
-    with pytest.raises(NotImplementedError, match="извлечение групп компаний"):
-        ExtractService().extract(driver, _settings())
+    result = ExtractService().extract(driver, _settings())
 
     client_type.assert_called_once_with(driver)
     client.get_objects.assert_called_once_with(_settings().nashdom)
     client.get_developers.assert_called_once_with({100})
-    client.get_company_groups.assert_not_called()
+    client.get_company_groups.assert_called_once_with(set())
+    assert result.objects == [_object()]
+    assert result.developers == [_developer()]
+    assert result.company_groups == []
+    assert isinstance(result.objects[0], ExtractedObject)
+    assert isinstance(result.developers[0], ExtractedDeveloper)
     driver_mock.quit.assert_not_called()
 
 
@@ -111,7 +124,7 @@ def test_collect_developer_ids_returns_unique_ids() -> None:
     assert result == {100}
 
 
-def test_extract_runs_developer_validation_and_consistency_in_order(
+def test_extract_runs_all_validation_stages_in_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     events: List[str] = []
@@ -144,11 +157,23 @@ def test_extract_runs_developer_validation_and_consistency_in_order(
     ) -> None:
         events.append("validate_consistency")
 
+    def get_company_groups(ids: Set[int]) -> List[ExtractedCompanyGroup]:
+        events.append("get_company_groups")
+        return []
+
+    def validate_company_groups(
+        company_groups: Sequence[ExtractedCompanyGroup],
+        ids: Set[int],
+    ) -> None:
+        events.append("validate_company_groups")
+
     client.get_objects.side_effect = get_objects
     validator.validate_objects.side_effect = validate_objects
     client.get_developers.side_effect = get_developers
     validator.validate_developers.side_effect = validate_developers
     validator.validate_company_group_consistency.side_effect = validate_consistency
+    client.get_company_groups.side_effect = get_company_groups
+    validator.validate_company_groups.side_effect = validate_company_groups
     monkeypatch.setattr(service_module, "NashDomClient", Mock(return_value=client))
     monkeypatch.setattr(
         service_module,
@@ -156,8 +181,7 @@ def test_extract_runs_developer_validation_and_consistency_in_order(
         Mock(return_value=validator),
     )
 
-    with pytest.raises(NotImplementedError, match="групп компаний"):
-        ExtractService().extract(cast(WebDriver, Mock()), _settings())
+    result = ExtractService().extract(cast(WebDriver, Mock()), _settings())
 
     assert events == [
         "get_objects",
@@ -165,8 +189,10 @@ def test_extract_runs_developer_validation_and_consistency_in_order(
         "get_developers",
         "validate_developers",
         "validate_consistency",
+        "get_company_groups",
+        "validate_company_groups",
     ]
-    client.get_company_groups.assert_not_called()
+    assert result.company_groups == []
 
 
 def test_developer_validation_failure_stops_before_consistency(
@@ -204,3 +230,24 @@ def test_collect_company_group_ids_unions_object_and_developer_sources() -> None
     )
 
     assert result == {5776, 9999}
+
+
+def test_extract_requests_union_company_group_ids_without_duplicates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = Mock()
+    client.get_objects.return_value = [
+        replace(_object(), company_group_id=5776),
+        replace(_object(), id=2, developer_id=200, company_group_id=6442),
+    ]
+    client.get_developers.return_value = [
+        _developer(company_group_id=5776),
+        _developer(developer_id=200, company_group_id=6442),
+    ]
+    client.get_company_groups.return_value = [_company_group(5776), _company_group(6442)]
+    monkeypatch.setattr(service_module, "NashDomClient", Mock(return_value=client))
+
+    result = ExtractService().extract(cast(WebDriver, Mock()), _settings())
+
+    client.get_company_groups.assert_called_once_with({5776, 6442})
+    assert {company_group.id for company_group in result.company_groups} == {5776, 6442}

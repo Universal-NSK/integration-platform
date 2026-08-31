@@ -1,6 +1,10 @@
 from typing import Dict, Sequence, Set
 
-from nashdom_sync.contracts import ExtractedDeveloper, ExtractedObject
+from nashdom_sync.contracts import (
+    ExtractedCompanyGroup,
+    ExtractedDeveloper,
+    ExtractedObject,
+)
 from nashdom_sync.extract.exceptions import SourceDataValidationError
 
 
@@ -78,6 +82,48 @@ class SourceDataValidator:
             )
             raise SourceDataValidationError(
                 f"NashDom не вернул запрошенных застройщиков: {formatted_ids}"
+            )
+
+    def validate_company_groups(
+        self,
+        company_groups: Sequence[ExtractedCompanyGroup],
+        expected_company_group_ids: Set[int],
+    ) -> None:
+        """Проверить точное соответствие набора запрошенным ID групп компаний."""
+        seen_ids: Set[int] = set()
+        duplicate_ids: Set[int] = set()
+
+        for company_group in company_groups:
+            if company_group.id in seen_ids:
+                duplicate_ids.add(company_group.id)
+            seen_ids.add(company_group.id)
+
+        if duplicate_ids:
+            formatted_ids = ", ".join(
+                str(company_group_id)
+                for company_group_id in sorted(duplicate_ids)
+            )
+            raise SourceDataValidationError(
+                f"В наборе NashDom повторяются ID групп компаний: {formatted_ids}"
+            )
+
+        unexpected_ids = seen_ids - expected_company_group_ids
+        if unexpected_ids:
+            formatted_ids = ", ".join(
+                str(company_group_id)
+                for company_group_id in sorted(unexpected_ids)
+            )
+            raise SourceDataValidationError(
+                f"NashDom вернул незапрошенные группы компаний: {formatted_ids}"
+            )
+
+        missing_ids = expected_company_group_ids - seen_ids
+        if missing_ids:
+            formatted_ids = ", ".join(
+                str(company_group_id) for company_group_id in sorted(missing_ids)
+            )
+            raise SourceDataValidationError(
+                f"NashDom не вернул запрошенные группы компаний: {formatted_ids}"
             )
 
     def validate_company_group_consistency(

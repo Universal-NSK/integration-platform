@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 import pytest
 from nashdom_sync.contracts import (
     BrowserSettings,
+    ExtractedCompanyGroup,
     ExtractedDeveloper,
     ExtractedObject,
     NashDomExtractSettings,
@@ -133,3 +134,36 @@ def test_live_bulk_developers_returns_confirmed_records(
     developers_by_id = {developer.id: developer for developer in developers}
     assert developers_by_id[16750].inn == "2308288843"
     assert developers_by_id[306].company_group_id == 5776
+
+
+@pytest.mark.browser
+@pytest.mark.nashdom_live
+def test_live_company_groups_returns_confirmed_records() -> None:
+    driver = BrowserProvider().provide(_live_browser_settings())
+    client = NashDomClient(driver)
+
+    try:
+        try:
+            client.get_objects(
+                NashDomExtractSettings(
+                    objects_to_parse_count=1,
+                    regions=(_RESEARCH_REGION,),
+                )
+            )
+            company_groups = client.get_company_groups({5776, 6442})
+        except NashDomUnavailableError as exc:
+            pytest.skip(f"наш.дом.рф временно недоступен: {exc}")
+    finally:
+        driver.quit()
+
+    assert len(company_groups) == 2
+    assert all(
+        isinstance(company_group, ExtractedCompanyGroup)
+        for company_group in company_groups
+    )
+    assert {company_group.id for company_group in company_groups} == {5776, 6442}
+    company_groups_by_id = {
+        company_group.id: company_group for company_group in company_groups
+    }
+    assert company_groups_by_id[5776].name == "2МЕН ГРУПП ДЕВЕЛОПМЕНТ"
+    assert company_groups_by_id[6442].name == "АРХСТРОЙ ГРУПП"

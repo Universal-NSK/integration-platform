@@ -166,9 +166,25 @@ class ExtractedDeveloper(BaseExtractedDataclass):
 
 
 @dataclass(frozen=True)
+class ExtractedCompanyGroup(BaseExtractedDataclass):
+    """Каноническая группа компаний из внешнего источника."""
+
+    id: int
+    name: str
+
+    def __post_init__(self) -> None:
+        if not _is_positive_integer(self.id):
+            raise ValueError(
+                "ID группы компаний должен быть положительным целым числом"
+            )
+        if not _is_non_empty_string(self.name):
+            raise ValueError("Название группы компаний не должно быть пустым")
+
+
+@dataclass(frozen=True)
 class ExtractResult(BaseExtractedDataclass):
-    """Полный результат Extract; публичный сервис пока его не формирует."""
+    """Полный результат Extract."""
 
     objects: List[ExtractedObject]
     developers: List[ExtractedDeveloper]
-    company_groups: List[BaseExtractedDataclass]
+    company_groups: List[ExtractedCompanyGroup]

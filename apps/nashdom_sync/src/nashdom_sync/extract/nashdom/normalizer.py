@@ -4,6 +4,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, cast
 
 from nashdom_sync.contracts import (
     CommissioningPeriod,
+    ExtractedCompanyGroup,
     ExtractedDeveloper,
     ExtractedObject,
     ExtractedObjectTypeEnum,
@@ -42,6 +43,9 @@ _DEVELOPER_EMAIL_PATHS: _SourcePaths = (("devEmail",),)
 _DEVELOPER_URL_PATHS: _SourcePaths = (("devSite",),)
 _DEVELOPER_COMPANY_GROUP_ID_PATHS: _SourcePaths = (("companyGroupId",),)
 
+_COMPANY_GROUP_ENTITY_ID_PATHS: _SourcePaths = (("devGroupId",),)
+_COMPANY_GROUP_NAME_PATHS: _SourcePaths = (("name",),)
+
 _QUARTER_PATTERN = re.compile(r"^(I|II|III|IV)\s+кв\.\s+(\d{4})$")
 _ROMAN_QUARTERS = {
     "I": 1,
@@ -71,6 +75,47 @@ class NashDomDataNormalizer:
             self._normalize_developer(raw_developer)
             for raw_developer in raw_developers
         ]
+
+    def normalize_company_groups(
+        self,
+        raw_company_groups: List[Dict[str, Any]],
+    ) -> List[ExtractedCompanyGroup]:
+        """Нормализовать группы компаний из detail ERZ-схемы."""
+        return [
+            self._normalize_company_group(raw_company_group)
+            for raw_company_group in raw_company_groups
+        ]
+
+    def _normalize_company_group(
+        self,
+        raw_company_group: Dict[str, Any],
+    ) -> ExtractedCompanyGroup:
+        company_group_id = self._normalize_integer(
+            self._resolve_value(
+                raw_company_group,
+                _COMPANY_GROUP_ENTITY_ID_PATHS,
+                "ID группы компаний",
+                value_normalizer=self._normalize_integer,
+            ),
+            "ID группы компаний",
+        )
+        name = self._normalize_required_text(
+            self._resolve_value(
+                raw_company_group,
+                _COMPANY_GROUP_NAME_PATHS,
+                "название группы компаний",
+                value_normalizer=self._normalize_required_text,
+            ),
+            "Название группы компаний",
+        )
+
+        try:
+            return ExtractedCompanyGroup(id=company_group_id, name=name)
+        except ValueError as exc:
+            raise NashDomNormalizationError(
+                f"Группа компаний NashDom с ID {company_group_id} "
+                f"нарушает контракт: {exc}"
+            ) from exc
 
     def _normalize_developer(
         self,

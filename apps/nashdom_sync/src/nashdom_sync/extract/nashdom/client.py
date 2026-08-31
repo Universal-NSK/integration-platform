@@ -15,7 +15,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 from nashdom_sync.contracts import (
-    BaseExtractedDataclass,
+    ExtractedCompanyGroup,
     ExtractedDeveloper,
     ExtractedObject,
     NashDomExtractSettings,
@@ -32,6 +32,7 @@ _API_BATCH_SIZE = 20
 _API_ENDPOINT_MARKER = "/api/kn/object"
 _DEVELOPER_API_BATCH_SIZE = 1000
 _DEVELOPER_API_PATH = "/сервисы/api/erz/main/filter"
+_COMPANY_GROUP_API_PATH = "/сервисы/api/erz/deverz/company"
 _BASE_URL = "https://xn--80az8a.xn--d1aqf.xn--p1ai"
 
 _Locator = Tuple[str, str]
@@ -243,9 +244,112 @@ class NashDomClient:
     def get_company_groups(
         self,
         company_group_ids: Set[int],
-    ) -> List[BaseExtractedDataclass]:
-        """Получение групп компаний будет реализовано в следующей итерации."""
-        raise NotImplementedError("Извлечение групп компаний NashDom ещё не реализовано")
+    ) -> List[ExtractedCompanyGroup]:
+        """Получить группы компаний через detail API с SSR fallback."""
+        if not company_group_ids:
+            return []
+
+        self._configure_timeouts()
+        self._ensure_nashdom_context()
+        raw_company_groups: Dict[int, Dict[str, Any]] = {}
+
+        for company_group_id in sorted(company_group_ids):
+            raw_company_group = self._fetch_company_group(company_group_id)
+            if raw_company_group is None:
+                raw_company_group = self._read_detail_company_group(company_group_id)
+            if raw_company_group is not None:
+                raw_company_groups[company_group_id] = raw_company_group
+
+        normalized_company_groups = self._normalizer.normalize_company_groups(
+            [
+                raw_company_groups[company_group_id]
+                for company_group_id in sorted(raw_company_groups)
+            ]
+        )
+        return sorted(normalized_company_groups, key=lambda company_group: company_group.id)
+
+    def _fetch_company_group(
+        self,
+        company_group_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        url = self._build_company_group_api_url(company_group_id)
+        raw_result_value: object = None
+        fetch_failure: Optional[str] = None
+        try:
+            raw_result_value = cast(
+                object,
+                self._driver.execute_async_script(  # pyright: ignore[reportUnknownMemberType]
+                    _PUBLIC_BROWSER_FETCH_SCRIPT,
+                    url,
+                ),
+            )
+        except TimeoutException:
+            fetch_failure = "timeout"
+        except WebDriverException:
+            fetch_failure = "webdriver"
+
+        if fetch_failure == "timeout":
+            raise NashDomUnavailableError(
+                f"NashDom не ответил на fetch группы компаний {company_group_id}"
+            )
+        if fetch_failure == "webdriver":
+            raise NashDomClientError(
+                f"Не удалось выполнить fetch группы компаний {company_group_id}"
+            )
+
+        if not isinstance(raw_result_value, dict):
+            raise NashDomClientError(
+                f"Fetch группы компаний {company_group_id} вернул неожиданный результат"
+            )
+
+        raw_result = cast(Dict[str, Any], raw_result_value)
+        status = raw_result.get("status")
+        body = raw_result.get("body")
+        if status is None:
+            raise NashDomUnavailableError(
+                f"Сетевая ошибка fetch группы компаний {company_group_id}"
+            )
+        if not isinstance(status, int) or isinstance(status, bool):
+            raise NashDomClientError(
+                f"Fetch группы компаний {company_group_id} вернул некорректный HTTP status"
+            )
+
+        self._raise_for_http_status(
+            status,
+            body,
+            f"fetch группы компаний {company_group_id}",
+        )
+        if self._contains_challenge(body):
+            raise NashDomUnavailableError(
+                "NashDom вернул anti-bot/challenge во время fetch группы "
+                f"компаний {company_group_id}"
+            )
+        if not isinstance(body, dict):
+            raise NashDomClientError("API групп компаний NashDom вернул не JSON-объект")
+
+        body_mapping = cast(Dict[str, Any], body)
+        if body_mapping.get("errcode") != "0":
+            raise NashDomClientError(
+                "API групп компаний NashDom вернул неожиданный errcode"
+            )
+
+        data = body_mapping.get("data")
+        if not isinstance(data, dict):
+            raise NashDomClientError(
+                "В ответе API групп компаний NashDom отсутствует объект data"
+            )
+
+        data_mapping = cast(Dict[str, Any], data)
+        if data_mapping.get("code") == "404":
+            return None
+
+        returned_id = self._read_raw_company_group_id(data_mapping)
+        if returned_id != company_group_id:
+            raise NashDomClientError(
+                f"API групп компаний вернул devGroupId={returned_id} "
+                f"вместо {company_group_id}"
+            )
+        return data_mapping
 
     def _collect_bulk_developers(
         self,
@@ -396,6 +500,17 @@ class NashDomClient:
         )
 
     @staticmethod
+    def _build_company_group_api_url(company_group_id: int) -> str:
+        return f"{_BASE_URL}{_COMPANY_GROUP_API_PATH}/{company_group_id}"
+
+    @staticmethod
+    def _build_company_group_detail_url(company_group_id: int) -> str:
+        return (
+            f"{_BASE_URL}/сервисы/единый-реестр-застройщиков/"
+            f"группа-компаний/{company_group_id}"
+        )
+
+    @staticmethod
     def _read_raw_developer_id(raw_developer: Dict[str, Any]) -> int:
         developer_id = raw_developer.get("devId")
         if not isinstance(developer_id, int) or isinstance(developer_id, bool):
@@ -403,6 +518,25 @@ class NashDomClient:
                 "Запись застройщика не содержит целочисленный devId"
             )
         return developer_id
+
+    @staticmethod
+    def _read_raw_company_group_id(raw_company_group: Dict[str, Any]) -> int:
+        company_group_id = raw_company_group.get("devGroupId")
+        if not isinstance(company_group_id, int) or isinstance(company_group_id, bool):
+            raise NashDomClientError(
+                "Запись группы компаний не содержит целочисленный devGroupId"
+            )
+        return company_group_id
+
+    @staticmethod
+    def _route_id_matches_requested(raw_id: Any, requested_id: int) -> bool:
+        if isinstance(raw_id, bool):
+            return False
+        if isinstance(raw_id, int):
+            return raw_id == requested_id
+        if isinstance(raw_id, str) and raw_id.isdigit():
+            return int(raw_id) == requested_id
+        return False
 
     def _ensure_nashdom_context(self) -> None:
         try:
@@ -432,6 +566,161 @@ class NashDomClient:
             ) from exc
 
         self._raise_if_unavailable_developer_page("подготовки ERZ API")
+
+    def _read_detail_company_group(
+        self,
+        company_group_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        self._open_company_group_detail(company_group_id)
+        next_data = self._read_company_group_next_data(company_group_id)
+
+        props = next_data.get("props")
+        if not isinstance(props, dict):
+            raise NashDomClientError(
+                "В detail __NEXT_DATA__ группы компаний отсутствует props"
+            )
+        props_mapping = cast(Dict[str, Any], props)
+        page_props = props_mapping.get("pageProps")
+        if not isinstance(page_props, dict):
+            raise NashDomClientError(
+                "В detail __NEXT_DATA__ группы компаний отсутствует props.pageProps"
+            )
+        page_props_mapping = cast(Dict[str, Any], page_props)
+
+        if "statusCode" in page_props_mapping:
+            status_code = page_props_mapping["statusCode"]
+            if not isinstance(status_code, int) or isinstance(status_code, bool):
+                raise NashDomClientError(
+                    "props.pageProps.statusCode группы компаний имеет неверный тип"
+                )
+            if status_code == 404:
+                return None
+            self._raise_for_http_status(
+                status_code,
+                next_data,
+                f"detail SSR группы компаний {company_group_id}",
+            )
+
+        if "id" in page_props_mapping and not self._route_id_matches_requested(
+            page_props_mapping["id"],
+            company_group_id,
+        ):
+            raise NashDomClientError(
+                "props.pageProps.id не соответствует запрошенной группе компаний "
+                f"{company_group_id}"
+            )
+
+        if "query" in next_data:
+            query = next_data["query"]
+            if not isinstance(query, dict):
+                raise NashDomClientError(
+                    "query группы компаний в __NEXT_DATA__ имеет неверный тип"
+                )
+            query_mapping = cast(Dict[str, Any], query)
+            if "id" in query_mapping and not self._route_id_matches_requested(
+                query_mapping["id"],
+                company_group_id,
+            ):
+                raise NashDomClientError(
+                    "query.id не соответствует запрошенной группе компаний "
+                    f"{company_group_id}"
+                )
+
+        initial_state = props_mapping.get("initialState")
+        if not isinstance(initial_state, dict):
+            raise NashDomClientError(
+                "В detail __NEXT_DATA__ группы компаний отсутствует props.initialState"
+            )
+        erz = cast(Dict[str, Any], initial_state).get("erz")
+        if not isinstance(erz, dict):
+            raise NashDomClientError(
+                "В detail __NEXT_DATA__ группы компаний отсутствует initialState.erz"
+            )
+        company_group_state = cast(Dict[str, Any], erz).get("companyGroup")
+        if not isinstance(company_group_state, dict):
+            raise NashDomClientError(
+                "В detail __NEXT_DATA__ группы компаний отсутствует erz.companyGroup"
+            )
+        raw_company_group = cast(Dict[str, Any], company_group_state).get("info")
+        if not isinstance(raw_company_group, dict):
+            raise NashDomClientError(
+                "В detail __NEXT_DATA__ группы компаний отсутствует "
+                "erz.companyGroup.info"
+            )
+
+        typed_raw_company_group = cast(Dict[str, Any], raw_company_group)
+        returned_id = self._read_raw_company_group_id(typed_raw_company_group)
+        if returned_id != company_group_id:
+            raise NashDomClientError(
+                f"Detail SSR вернул devGroupId={returned_id} вместо {company_group_id}"
+            )
+        return typed_raw_company_group
+
+    def _open_company_group_detail(self, company_group_id: int) -> None:
+        try:
+            self._driver.get(self._build_company_group_detail_url(company_group_id))
+        except TimeoutException as exc:
+            raise NashDomUnavailableError(
+                f"NashDom не ответил при открытии группы компаний {company_group_id}"
+            ) from exc
+        except WebDriverException as exc:
+            error_text = str(exc).lower()
+            if (
+                "net::err_" in error_text
+                or "timed out" in error_text
+                or "timeout" in error_text
+            ):
+                raise NashDomUnavailableError(
+                    "Сетевая ошибка при открытии группы компаний "
+                    f"{company_group_id}"
+                ) from exc
+            raise NashDomClientError(
+                f"Браузер не смог открыть страницу группы компаний {company_group_id}"
+            ) from exc
+
+        self._raise_if_unavailable_developer_page(
+            f"группы компаний {company_group_id}"
+        )
+
+    def _read_company_group_next_data(
+        self,
+        company_group_id: int,
+    ) -> Dict[str, Any]:
+        try:
+            element = WebDriverWait(self._driver, _WAIT_TIMEOUT_SECONDS).until(
+                EC.presence_of_element_located((By.ID, "__NEXT_DATA__"))
+            )
+        except TimeoutException as exc:
+            raise NashDomClientError(
+                f"На странице группы компаний {company_group_id} не найден __NEXT_DATA__"
+            ) from exc
+
+        try:
+            raw_next_data: Optional[str] = element.get_attribute(  # pyright: ignore[reportUnknownMemberType]
+                "textContent"
+            )
+        except WebDriverException as exc:
+            raise NashDomClientError(
+                "Не удалось прочитать __NEXT_DATA__ группы компаний "
+                f"{company_group_id}"
+            ) from exc
+        if not raw_next_data:
+            raise NashDomClientError(
+                f"__NEXT_DATA__ группы компаний {company_group_id} не содержит данных"
+            )
+
+        try:
+            next_data = json.loads(raw_next_data)
+        except json.JSONDecodeError as exc:
+            raise NashDomClientError(
+                "Не удалось разобрать __NEXT_DATA__ группы компаний "
+                f"{company_group_id}"
+            ) from exc
+        if not isinstance(next_data, dict):
+            raise NashDomClientError(
+                f"__NEXT_DATA__ группы компаний {company_group_id} имеет неожиданный тип"
+            )
+        return cast(Dict[str, Any], next_data)
 
     def _read_detail_developer(self, developer_id: int) -> Dict[str, Any]:
         self._open_developer_detail(developer_id)

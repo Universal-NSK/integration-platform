@@ -5,6 +5,7 @@ from typing import Optional
 import pytest
 from nashdom_sync.contracts import (
     CommissioningPeriod,
+    ExtractedCompanyGroup,
     ExtractedDeveloper,
     ExtractedObject,
     ExtractedObjectTypeEnum,
@@ -50,6 +51,13 @@ def _developer(
         email="developer@example.test",
         url=None,
         company_group_id=company_group_id,
+    )
+
+
+def _company_group(company_group_id: int) -> ExtractedCompanyGroup:
+    return ExtractedCompanyGroup(
+        id=company_group_id,
+        name=f"Группа компаний {company_group_id}",
     )
 
 
@@ -105,6 +113,50 @@ def test_missing_developer_id_fails() -> None:
 
 def test_empty_expected_and_empty_developers_are_valid() -> None:
     SourceDataValidator().validate_developers([], set())
+
+
+def test_exact_company_group_set_is_valid() -> None:
+    SourceDataValidator().validate_company_groups(
+        [_company_group(5776), _company_group(6442)],
+        {5776, 6442},
+    )
+
+
+def test_duplicate_company_group_ids_fail() -> None:
+    with pytest.raises(
+        SourceDataValidationError,
+        match="повторяются ID групп компаний: 5776",
+    ):
+        SourceDataValidator().validate_company_groups(
+            [_company_group(5776), _company_group(5776)],
+            {5776},
+        )
+
+
+def test_unexpected_company_group_id_fails() -> None:
+    with pytest.raises(
+        SourceDataValidationError,
+        match="незапрошенные группы компаний: 9999",
+    ):
+        SourceDataValidator().validate_company_groups(
+            [_company_group(9999)],
+            {5776},
+        )
+
+
+def test_missing_company_group_id_fails() -> None:
+    with pytest.raises(
+        SourceDataValidationError,
+        match="не вернул запрошенные группы компаний: 6442",
+    ):
+        SourceDataValidator().validate_company_groups(
+            [_company_group(5776)],
+            {5776, 6442},
+        )
+
+
+def test_empty_expected_and_empty_company_groups_are_valid() -> None:
+    SourceDataValidator().validate_company_groups([], set())
 
 
 @pytest.mark.parametrize(
