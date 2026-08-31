@@ -5,6 +5,7 @@ import pytest
 from nashdom_sync.contracts import NashDomExtractSettings, NashDomRegion
 from nashdom_sync.extract import NashDomClientError, NashDomUnavailableError
 from nashdom_sync.extract.nashdom.client import (
+    _INSTALL_INTERCEPTOR_SCRIPT,  # pyright: ignore[reportPrivateUsage]
     NashDomClient,
     _ApiBatch,  # pyright: ignore[reportPrivateUsage]
     _CapturedRequest,  # pyright: ignore[reportPrivateUsage]
@@ -42,6 +43,10 @@ def _settings(target_count: int) -> NashDomExtractSettings:
 def _client() -> Tuple[NashDomClient, Mock]:
     driver = Mock()
     return NashDomClient(cast(WebDriver, driver)), driver
+
+
+def test_interceptor_script_returns_installation_result_to_selenium() -> None:
+    assert _INSTALL_INTERCEPTOR_SCRIPT.lstrip().startswith("return ")
 
 
 def test_ssr_fallback_returns_every_available_object_without_xhr(

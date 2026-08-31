@@ -46,48 +46,46 @@ _LOAD_MORE_LOCATORS: Tuple[_Locator, ...] = (
 )
 
 _INSTALL_INTERCEPTOR_SCRIPT = """
-(() => {
+return (() => {
     window.__nashdomObjectRequest = null;
 
-    if (window.__nashdomObjectInterceptorInstalled === true) {
-        return true;
-    }
+    if (window.__nashdomObjectInterceptorInstalled != true) {
+        const endpointMarker = "/api/kn/object";
+        const originalOpen = XMLHttpRequest.prototype.open;
+        const originalSend = XMLHttpRequest.prototype.send;
+        const originalSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
 
-    const endpointMarker = "/api/kn/object";
-    const originalOpen = XMLHttpRequest.prototype.open;
-    const originalSend = XMLHttpRequest.prototype.send;
-    const originalSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
+        XMLHttpRequest.prototype.open = function(method, url, ...args) {
+            this.__nashdomObjectUrl = String(url);
+            this.__nashdomObjectAuthorization = null;
+            return originalOpen.call(this, method, url, ...args);
+        };
 
-    XMLHttpRequest.prototype.open = function(method, url, ...args) {
-        this.__nashdomObjectUrl = String(url);
-        this.__nashdomObjectAuthorization = null;
-        return originalOpen.call(this, method, url, ...args);
-    };
-
-    XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
-        if (String(name).toLowerCase() === "authorization") {
-            this.__nashdomObjectAuthorization = String(value);
-        }
-        return originalSetRequestHeader.call(this, name, value);
-    };
-
-    XMLHttpRequest.prototype.send = function(body) {
-        this.addEventListener("loadend", function() {
-            const requestUrl = this.responseURL || this.__nashdomObjectUrl || "";
-            if (!requestUrl.includes(endpointMarker)) {
-                return;
+        XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
+            if (String(name).toLowerCase() === "authorization") {
+                this.__nashdomObjectAuthorization = String(value);
             }
+            return originalSetRequestHeader.call(this, name, value);
+        };
 
-            window.__nashdomObjectRequest = {
-                requestUrl: requestUrl,
-                authorization: this.__nashdomObjectAuthorization,
-                status: this.status
-            };
-        });
-        return originalSend.call(this, body);
-    };
+        XMLHttpRequest.prototype.send = function(body) {
+            this.addEventListener("loadend", function() {
+                const requestUrl = this.responseURL || this.__nashdomObjectUrl || "";
+                if (!requestUrl.includes(endpointMarker)) {
+                    return;
+                }
 
-    window.__nashdomObjectInterceptorInstalled = true;
+                window.__nashdomObjectRequest = {
+                    requestUrl: requestUrl,
+                    authorization: this.__nashdomObjectAuthorization,
+                    status: this.status
+                };
+            });
+            return originalSend.call(this, body);
+        };
+
+        window.__nashdomObjectInterceptorInstalled = true;
+    }
     return true;
 })();
 """
