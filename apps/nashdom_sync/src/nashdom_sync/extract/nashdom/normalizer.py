@@ -184,24 +184,7 @@ class NashDomDataNormalizer:
             ),
             "ID региона застройщика",
         )
-        legal_address = self._normalize_required_text(
-            self._resolve_value(
-                raw_developer,
-                _DEVELOPER_LEGAL_ADDRESS_PATHS,
-                "юридический адрес застройщика",
-                value_normalizer=self._normalize_required_text,
-            ),
-            "Юридический адрес застройщика",
-        )
-        fact_address = self._normalize_required_text(
-            self._resolve_value(
-                raw_developer,
-                _DEVELOPER_FACT_ADDRESS_PATHS,
-                "фактический адрес застройщика",
-                value_normalizer=self._normalize_required_text,
-            ),
-            "Фактический адрес застройщика",
-        )
+        legal_address, fact_address = self._normalize_developer_addresses(raw_developer)
         contact_name = self._normalize_required_text(
             self._resolve_value(
                 raw_developer,
@@ -271,6 +254,51 @@ class NashDomDataNormalizer:
             raise NashDomNormalizationError(
                 f"Застройщик NashDom с ID {developer_id} нарушает контракт: {exc}"
             ) from exc
+
+    def _normalize_developer_addresses(
+        self,
+        raw_developer: Dict[str, Any],
+    ) -> Tuple[str, str]:
+        raw_legal_address = self._resolve_value(
+            raw_developer,
+            _DEVELOPER_LEGAL_ADDRESS_PATHS,
+            "юридический адрес застройщика",
+            required=False,
+        )
+        raw_fact_address = self._resolve_value(
+            raw_developer,
+            _DEVELOPER_FACT_ADDRESS_PATHS,
+            "фактический адрес застройщика",
+            required=False,
+        )
+
+        if raw_legal_address is not None and not isinstance(raw_legal_address, str):
+            raise NashDomNormalizationError(
+                "Юридический адрес застройщика должен быть строкой"
+            )
+        if raw_fact_address is not None and not isinstance(raw_fact_address, str):
+            raise NashDomNormalizationError(
+                "Фактический адрес застройщика должен быть строкой"
+            )
+
+        legal_address = (
+            raw_legal_address.strip() if raw_legal_address is not None else None
+        )
+        fact_address = (
+            raw_fact_address.strip() if raw_fact_address is not None else None
+        )
+        legal_address = legal_address or None
+        fact_address = fact_address or None
+
+        if legal_address is None:
+            if fact_address is None:
+                raise NashDomNormalizationError(
+                    "У застройщика отсутствуют юридический и фактический адреса"
+                )
+            return fact_address, fact_address
+        if fact_address is None:
+            return legal_address, legal_address
+        return legal_address, fact_address
 
     def _normalize_object(self, raw_object: Dict[str, Any]) -> ExtractedObject:
         object_id = self._normalize_integer(

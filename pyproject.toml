@@ -31,9 +31,11 @@ include = [
     "services",
     "apps",
     "packages",
+    "temp",
 ]
 
 extraPaths = [
+    "apps/nashdom_sync/src",
     "services/bitrix_gateway/src",
     "packages/runtime_files/src",
     "packages/platform_logging/src",

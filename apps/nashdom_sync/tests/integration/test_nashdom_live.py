@@ -122,18 +122,19 @@ def test_live_bulk_developers_returns_confirmed_records(
                     regions=(_RESEARCH_REGION,),
                 )
             )
-            developers = client.get_developers({306, 16750})
+            developers = client.get_developers({306, 14499, 16750})
         except NashDomUnavailableError as exc:
             pytest.skip(f"наш.дом.рф временно недоступен: {exc}")
     finally:
         driver.quit()
 
-    assert len(developers) == 2
+    assert len(developers) == 3
     assert all(isinstance(developer, ExtractedDeveloper) for developer in developers)
-    assert {developer.id for developer in developers} == {306, 16750}
+    assert {developer.id for developer in developers} == {306, 14499, 16750}
     developers_by_id = {developer.id: developer for developer in developers}
     assert developers_by_id[16750].inn == "2308288843"
     assert developers_by_id[306].company_group_id == 5776
+    assert developers_by_id[14499].fact_address == developers_by_id[14499].legal_address
 
 
 @pytest.mark.browser

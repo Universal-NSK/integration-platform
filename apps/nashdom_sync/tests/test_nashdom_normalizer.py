@@ -320,6 +320,99 @@ def test_normalizes_real_developer_examples_to_exact_canonical_mapping() -> None
     assert result[1].short_name.startswith("CЗ")
 
 
+def test_developer_preserves_distinct_normalized_addresses() -> None:
+    raw_developer = _raw_developer_306()
+    raw_developer["devLegalAddr"] = "  Юридический адрес  "
+    raw_developer["devFactAddr"] = "  Фактический адрес  "
+
+    result = NashDomDataNormalizer().normalize_developers([raw_developer])[0]
+
+    assert result.legal_address == "Юридический адрес"
+    assert result.fact_address == "Фактический адрес"
+
+
+@pytest.mark.parametrize("fact_address_state", ["missing", "null", "empty", "whitespace"])
+def test_missing_or_empty_fact_address_falls_back_to_normalized_legal_address(
+    fact_address_state: str,
+) -> None:
+    raw_developer = _raw_developer_306()
+    raw_developer["devLegalAddr"] = "  Юридический адрес  "
+    if fact_address_state == "missing":
+        del raw_developer["devFactAddr"]
+    elif fact_address_state == "null":
+        raw_developer["devFactAddr"] = None
+    elif fact_address_state == "empty":
+        raw_developer["devFactAddr"] = ""
+    else:
+        raw_developer["devFactAddr"] = " \t\r\n "
+
+    result = NashDomDataNormalizer().normalize_developers([raw_developer])[0]
+
+    assert result.legal_address == "Юридический адрес"
+    assert result.fact_address == "Юридический адрес"
+
+
+@pytest.mark.parametrize("legal_address_state", ["missing", "null", "empty", "whitespace"])
+def test_missing_or_empty_legal_address_falls_back_to_normalized_fact_address(
+    legal_address_state: str,
+) -> None:
+    raw_developer = _raw_developer_306()
+    raw_developer["devFactAddr"] = "  Фактический адрес  "
+    if legal_address_state == "missing":
+        del raw_developer["devLegalAddr"]
+    elif legal_address_state == "null":
+        raw_developer["devLegalAddr"] = None
+    elif legal_address_state == "empty":
+        raw_developer["devLegalAddr"] = ""
+    else:
+        raw_developer["devLegalAddr"] = " \t\r\n "
+
+    result = NashDomDataNormalizer().normalize_developers([raw_developer])[0]
+
+    assert result.legal_address == "Фактический адрес"
+    assert result.fact_address == "Фактический адрес"
+
+
+def test_missing_both_developer_addresses_is_normalization_error() -> None:
+    raw_developer = _raw_developer_306()
+    del raw_developer["devLegalAddr"]
+    del raw_developer["devFactAddr"]
+
+    with pytest.raises(NashDomNormalizationError, match="отсутствуют.*адреса"):
+        NashDomDataNormalizer().normalize_developers([raw_developer])
+
+
+@pytest.mark.parametrize(
+    ("legal_address", "fact_address"),
+    [(None, None), (None, ""), ("", None), ("  ", "\t\r\n")],
+)
+def test_null_or_empty_both_developer_addresses_is_normalization_error(
+    legal_address: object,
+    fact_address: object,
+) -> None:
+    raw_developer = _raw_developer_306()
+    raw_developer["devLegalAddr"] = legal_address
+    raw_developer["devFactAddr"] = fact_address
+
+    with pytest.raises(NashDomNormalizationError, match="отсутствуют.*адреса"):
+        NashDomDataNormalizer().normalize_developers([raw_developer])
+
+
+@pytest.mark.parametrize(
+    ("invalid_field", "invalid_value"),
+    [("devLegalAddr", 123), ("devFactAddr", [])],
+)
+def test_invalid_developer_address_type_is_normalization_error(
+    invalid_field: str,
+    invalid_value: object,
+) -> None:
+    raw_developer = _raw_developer_306()
+    raw_developer[invalid_field] = invalid_value
+
+    with pytest.raises(NashDomNormalizationError, match="адрес застройщика должен быть строкой"):
+        NashDomDataNormalizer().normalize_developers([raw_developer])
+
+
 @pytest.mark.parametrize("site_state", ["missing", "null"])
 def test_missing_or_null_developer_site_normalizes_to_none(site_state: str) -> None:
     raw_developer = _raw_developer_306()
