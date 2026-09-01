@@ -32,13 +32,8 @@ def _raw_developer_306() -> Dict[str, Any]:
         "devKpp": "720301001",
         "devOgrn": "1067746424899",
         "devOrgRegRegionCd": 72,
-        "devLegalAddr": (
-            "Тюменская область, Город Тюмень, Улица Республики дом 143А"
-        ),
-        "devFactAddr": (
-            "Тюменская обл, г.о. город Тюмень, г. Тюмень, "
-            "ул. Республики, д.143А"
-        ),
+        "devLegalAddr": ("Тюменская область, Город Тюмень, Улица Республики дом 143А"),
+        "devFactAddr": ("Тюменская обл, г.о. город Тюмень, г. Тюмень, ул. Республики, д.143А"),
         "devEmplMainFullNm": "Шулепов Петр Владимирович",
         "devPhoneNum": "+79091697719",
         "devEmail": "2men-group@mail.ru",
@@ -51,21 +46,15 @@ def _raw_developer_16750() -> Dict[str, Any]:
     return {
         "devId": 16750,
         "devShortCleanNm": "CЗ ФЕМИЛИ РЕЗОРТ НЕБУГ",
-        "devFullCleanNm": (
-            "СПЕЦИАЛИЗИРОВАННЫЙ ЗАСТРОЙЩИК ФЕМИЛИ РЕЗОРТ НЕБУГ"
-        ),
+        "devFullCleanNm": ("СПЕЦИАЛИЗИРОВАННЫЙ ЗАСТРОЙЩИК ФЕМИЛИ РЕЗОРТ НЕБУГ"),
         "devInn": "2308288843",
         "devKpp": "230801001",
         "devOgrn": "1222300064931",
         "devOrgRegRegionCd": 23,
         "devLegalAddr": (
-            "Краснодарский край, город Краснодар, улица Северная дом д191 "
-            "помещение помещ38офис12"
+            "Краснодарский край, город Краснодар, улица Северная дом д191 помещение помещ38офис12"
         ),
-        "devFactAddr": (
-            "Краснодарский край, Краснодар, Северная, д.д191, "
-            "пом.помещ38офис12"
-        ),
+        "devFactAddr": ("Краснодарский край, Краснодар, Северная, д.д191, пом.помещ38офис12"),
         "devEmplMainFullNm": "Овчинников Михаил Юрьевич",
         "devPhoneNum": "+79889574354",
         "devEmail": "metrix.maisky@yandex.ru",
@@ -91,9 +80,7 @@ def _raw_company_group_6442() -> Dict[str, Any]:
 
 
 def test_normalizes_xhr_fixture_to_expected_object() -> None:
-    result = NashDomDataNormalizer().normalize_objects(
-        [_fixture("nashdom_xhr_object.json")]
-    )
+    result = NashDomDataNormalizer().normalize_objects([_fixture("nashdom_xhr_object.json")])
 
     assert result == [
         ExtractedObject(
@@ -279,13 +266,8 @@ def test_normalizes_real_developer_examples_to_exact_canonical_mapping() -> None
             kpp="720301001",
             ogrn="1067746424899",
             region_id=72,
-            legal_address=(
-                "Тюменская область, Город Тюмень, Улица Республики дом 143А"
-            ),
-            fact_address=(
-                "Тюменская обл, г.о. город Тюмень, г. Тюмень, "
-                "ул. Республики, д.143А"
-            ),
+            legal_address=("Тюменская область, Город Тюмень, Улица Республики дом 143А"),
+            fact_address=("Тюменская обл, г.о. город Тюмень, г. Тюмень, ул. Республики, д.143А"),
             contact_name="Шулепов Петр Владимирович",
             phone="+79091697719",
             email="2men-group@mail.ru",
@@ -295,9 +277,7 @@ def test_normalizes_real_developer_examples_to_exact_canonical_mapping() -> None
         ExtractedDeveloper(
             id=16750,
             short_name="CЗ ФЕМИЛИ РЕЗОРТ НЕБУГ",
-            full_name=(
-                "СПЕЦИАЛИЗИРОВАННЫЙ ЗАСТРОЙЩИК ФЕМИЛИ РЕЗОРТ НЕБУГ"
-            ),
+            full_name=("СПЕЦИАЛИЗИРОВАННЫЙ ЗАСТРОЙЩИК ФЕМИЛИ РЕЗОРТ НЕБУГ"),
             inn="2308288843",
             kpp="230801001",
             ogrn="1222300064931",
@@ -306,10 +286,7 @@ def test_normalizes_real_developer_examples_to_exact_canonical_mapping() -> None
                 "Краснодарский край, город Краснодар, улица Северная дом д191 "
                 "помещение помещ38офис12"
             ),
-            fact_address=(
-                "Краснодарский край, Краснодар, Северная, д.д191, "
-                "пом.помещ38офис12"
-            ),
+            fact_address=("Краснодарский край, Краснодар, Северная, д.д191, пом.помещ38офис12"),
             contact_name="Овчинников Михаил Юрьевич",
             phone="+79889574354",
             email="metrix.maisky@yandex.ru",

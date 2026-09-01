@@ -329,15 +329,11 @@ class NashDomClient:
 
         body_mapping = cast(Dict[str, Any], body)
         if body_mapping.get("errcode") != "0":
-            raise NashDomClientError(
-                "API групп компаний NashDom вернул неожиданный errcode"
-            )
+            raise NashDomClientError("API групп компаний NashDom вернул неожиданный errcode")
 
         data = body_mapping.get("data")
         if not isinstance(data, dict):
-            raise NashDomClientError(
-                "В ответе API групп компаний NashDom отсутствует объект data"
-            )
+            raise NashDomClientError("В ответе API групп компаний NashDom отсутствует объект data")
 
         data_mapping = cast(Dict[str, Any], data)
         if data_mapping.get("code") == "404":
@@ -346,8 +342,7 @@ class NashDomClient:
         returned_id = self._read_raw_company_group_id(data_mapping)
         if returned_id != company_group_id:
             raise NashDomClientError(
-                f"API групп компаний вернул devGroupId={returned_id} "
-                f"вместо {company_group_id}"
+                f"API групп компаний вернул devGroupId={returned_id} вместо {company_group_id}"
             )
         return data_mapping
 
@@ -365,18 +360,13 @@ class NashDomClient:
                 limit=_DEVELOPER_API_BATCH_SIZE,
             )
             if batch.count == 0 and batch.items:
-                raise NashDomClientError(
-                    "ERZ bulk API вернул застройщиков при data.count=0"
-                )
+                raise NashDomClientError("ERZ bulk API вернул застройщиков при data.count=0")
 
             has_new_registry_record = False
             for raw_developer in batch.items:
                 developer_id = self._read_raw_developer_id(raw_developer)
                 existing_developer = registry_index.get(developer_id)
-                if (
-                    existing_developer is not None
-                    and existing_developer != raw_developer
-                ):
+                if existing_developer is not None and existing_developer != raw_developer:
                     raise NashDomClientError(
                         "ERZ bulk API вернул различающиеся записи "
                         f"для повторного devId={developer_id}"
@@ -422,13 +412,9 @@ class NashDomClient:
             fetch_failure = "webdriver"
 
         if fetch_failure == "timeout":
-            raise NashDomUnavailableError(
-                f"NashDom не ответил на ERZ bulk fetch с offset={offset}"
-            )
+            raise NashDomUnavailableError(f"NashDom не ответил на ERZ bulk fetch с offset={offset}")
         if fetch_failure == "webdriver":
-            raise NashDomClientError(
-                f"Не удалось выполнить ERZ bulk fetch с offset={offset}"
-            )
+            raise NashDomClientError(f"Не удалось выполнить ERZ bulk fetch с offset={offset}")
 
         if not isinstance(raw_result_value, dict):
             raise NashDomClientError("ERZ bulk fetch вернул неожиданный результат")
@@ -437,9 +423,7 @@ class NashDomClient:
         status = raw_result.get("status")
         body = raw_result.get("body")
         if status is None:
-            raise NashDomUnavailableError(
-                f"Сетевая ошибка ERZ bulk fetch с offset={offset}"
-            )
+            raise NashDomUnavailableError(f"Сетевая ошибка ERZ bulk fetch с offset={offset}")
         if not isinstance(status, int) or isinstance(status, bool):
             raise NashDomClientError("ERZ bulk fetch вернул некорректный HTTP status")
 
@@ -462,20 +446,14 @@ class NashDomClient:
         raw_items = data_mapping.get("developers")
         count = data_mapping.get("count")
         if not isinstance(raw_items, list):
-            raise NashDomClientError(
-                "В ответе ERZ bulk API data.developers не является списком"
-            )
+            raise NashDomClientError("В ответе ERZ bulk API data.developers не является списком")
         if not isinstance(count, int) or isinstance(count, bool) or count < 0:
-            raise NashDomClientError(
-                "В ответе ERZ bulk API data.count имеет неверный тип"
-            )
+            raise NashDomClientError("В ответе ERZ bulk API data.count имеет неверный тип")
 
         items: List[Dict[str, Any]] = []
         for raw_item in cast(List[Any], raw_items):
             if not isinstance(raw_item, dict):
-                raise NashDomClientError(
-                    "ERZ bulk data.developers содержит не объект JSON"
-                )
+                raise NashDomClientError("ERZ bulk data.developers содержит не объект JSON")
             items.append(cast(Dict[str, Any], raw_item))
         return _DeveloperApiBatch(items=items, count=count)
 
@@ -494,10 +472,7 @@ class NashDomClient:
 
     @staticmethod
     def _build_developer_detail_url(developer_id: int) -> str:
-        return (
-            f"{_BASE_URL}/сервисы/единый-реестр-застройщиков/"
-            f"застройщик/{developer_id}"
-        )
+        return f"{_BASE_URL}/сервисы/единый-реестр-застройщиков/застройщик/{developer_id}"
 
     @staticmethod
     def _build_company_group_api_url(company_group_id: int) -> str:
@@ -505,27 +480,20 @@ class NashDomClient:
 
     @staticmethod
     def _build_company_group_detail_url(company_group_id: int) -> str:
-        return (
-            f"{_BASE_URL}/сервисы/единый-реестр-застройщиков/"
-            f"группа-компаний/{company_group_id}"
-        )
+        return f"{_BASE_URL}/сервисы/единый-реестр-застройщиков/группа-компаний/{company_group_id}"
 
     @staticmethod
     def _read_raw_developer_id(raw_developer: Dict[str, Any]) -> int:
         developer_id = raw_developer.get("devId")
         if not isinstance(developer_id, int) or isinstance(developer_id, bool):
-            raise NashDomClientError(
-                "Запись застройщика не содержит целочисленный devId"
-            )
+            raise NashDomClientError("Запись застройщика не содержит целочисленный devId")
         return developer_id
 
     @staticmethod
     def _read_raw_company_group_id(raw_company_group: Dict[str, Any]) -> int:
         company_group_id = raw_company_group.get("devGroupId")
         if not isinstance(company_group_id, int) or isinstance(company_group_id, bool):
-            raise NashDomClientError(
-                "Запись группы компаний не содержит целочисленный devGroupId"
-            )
+            raise NashDomClientError("Запись группы компаний не содержит целочисленный devGroupId")
         return company_group_id
 
     @staticmethod
@@ -576,9 +544,7 @@ class NashDomClient:
 
         props = next_data.get("props")
         if not isinstance(props, dict):
-            raise NashDomClientError(
-                "В detail __NEXT_DATA__ группы компаний отсутствует props"
-            )
+            raise NashDomClientError("В detail __NEXT_DATA__ группы компаний отсутствует props")
         props_mapping = cast(Dict[str, Any], props)
         page_props = props_mapping.get("pageProps")
         if not isinstance(page_props, dict):
@@ -613,17 +579,14 @@ class NashDomClient:
         if "query" in next_data:
             query = next_data["query"]
             if not isinstance(query, dict):
-                raise NashDomClientError(
-                    "query группы компаний в __NEXT_DATA__ имеет неверный тип"
-                )
+                raise NashDomClientError("query группы компаний в __NEXT_DATA__ имеет неверный тип")
             query_mapping = cast(Dict[str, Any], query)
             if "id" in query_mapping and not self._route_id_matches_requested(
                 query_mapping["id"],
                 company_group_id,
             ):
                 raise NashDomClientError(
-                    "query.id не соответствует запрошенной группе компаний "
-                    f"{company_group_id}"
+                    f"query.id не соответствует запрошенной группе компаний {company_group_id}"
                 )
 
         initial_state = props_mapping.get("initialState")
@@ -644,8 +607,7 @@ class NashDomClient:
         raw_company_group = cast(Dict[str, Any], company_group_state).get("info")
         if not isinstance(raw_company_group, dict):
             raise NashDomClientError(
-                "В detail __NEXT_DATA__ группы компаний отсутствует "
-                "erz.companyGroup.info"
+                "В detail __NEXT_DATA__ группы компаний отсутствует erz.companyGroup.info"
             )
 
         typed_raw_company_group = cast(Dict[str, Any], raw_company_group)
@@ -665,22 +627,15 @@ class NashDomClient:
             ) from exc
         except WebDriverException as exc:
             error_text = str(exc).lower()
-            if (
-                "net::err_" in error_text
-                or "timed out" in error_text
-                or "timeout" in error_text
-            ):
+            if "net::err_" in error_text or "timed out" in error_text or "timeout" in error_text:
                 raise NashDomUnavailableError(
-                    "Сетевая ошибка при открытии группы компаний "
-                    f"{company_group_id}"
+                    f"Сетевая ошибка при открытии группы компаний {company_group_id}"
                 ) from exc
             raise NashDomClientError(
                 f"Браузер не смог открыть страницу группы компаний {company_group_id}"
             ) from exc
 
-        self._raise_if_unavailable_developer_page(
-            f"группы компаний {company_group_id}"
-        )
+        self._raise_if_unavailable_developer_page(f"группы компаний {company_group_id}")
 
     def _read_company_group_next_data(
         self,
@@ -701,8 +656,7 @@ class NashDomClient:
             )
         except WebDriverException as exc:
             raise NashDomClientError(
-                "Не удалось прочитать __NEXT_DATA__ группы компаний "
-                f"{company_group_id}"
+                f"Не удалось прочитать __NEXT_DATA__ группы компаний {company_group_id}"
             ) from exc
         if not raw_next_data:
             raise NashDomClientError(
@@ -713,8 +667,7 @@ class NashDomClient:
             next_data = json.loads(raw_next_data)
         except json.JSONDecodeError as exc:
             raise NashDomClientError(
-                "Не удалось разобрать __NEXT_DATA__ группы компаний "
-                f"{company_group_id}"
+                f"Не удалось разобрать __NEXT_DATA__ группы компаний {company_group_id}"
             ) from exc
         if not isinstance(next_data, dict):
             raise NashDomClientError(
@@ -728,9 +681,7 @@ class NashDomClient:
 
         props = next_data.get("props")
         if not isinstance(props, dict):
-            raise NashDomClientError(
-                "В detail __NEXT_DATA__ застройщика отсутствует props"
-            )
+            raise NashDomClientError("В detail __NEXT_DATA__ застройщика отсутствует props")
         props_mapping = cast(Dict[str, Any], props)
         page_props = props_mapping.get("pageProps")
         if not isinstance(page_props, dict):
@@ -759,8 +710,7 @@ class NashDomClient:
                 or page_developer_id != developer_id
             ):
                 raise NashDomClientError(
-                    "props.pageProps.id не соответствует запрошенному застройщику "
-                    f"{developer_id}"
+                    f"props.pageProps.id не соответствует запрошенному застройщику {developer_id}"
                 )
 
         initial_state = props_mapping.get("initialState")
@@ -775,9 +725,7 @@ class NashDomClient:
             )
         builder_state = cast(Dict[str, Any], erz).get("builder")
         if not isinstance(builder_state, dict):
-            raise NashDomClientError(
-                "В detail __NEXT_DATA__ застройщика отсутствует erz.builder"
-            )
+            raise NashDomClientError("В detail __NEXT_DATA__ застройщика отсутствует erz.builder")
         raw_developer = cast(Dict[str, Any], builder_state).get("builder")
         if not isinstance(raw_developer, dict):
             raise NashDomClientError(
@@ -820,9 +768,7 @@ class NashDomClient:
             ) from exc
 
         if any(marker in page_text for marker in _SERVER_ERROR_MARKERS):
-            raise NashDomUnavailableError(
-                f"NashDom вернул серверную ошибку во время {operation}"
-            )
+            raise NashDomUnavailableError(f"NashDom вернул серверную ошибку во время {operation}")
         if any(marker in page_text for marker in _CHALLENGE_MARKERS):
             raise NashDomUnavailableError(
                 f"NashDom показал anti-bot/challenge во время {operation}"
@@ -847,9 +793,7 @@ class NashDomClient:
                 f"Не удалось прочитать __NEXT_DATA__ застройщика {developer_id}"
             ) from exc
         if not raw_next_data:
-            raise NashDomClientError(
-                f"__NEXT_DATA__ застройщика {developer_id} не содержит данных"
-            )
+            raise NashDomClientError(f"__NEXT_DATA__ застройщика {developer_id} не содержит данных")
 
         try:
             next_data = json.loads(raw_next_data)
@@ -962,15 +906,11 @@ class NashDomClient:
         next_data_mapping = cast(Dict[str, Any], next_data)
         props = next_data_mapping.get("props")
         if not isinstance(props, dict):
-            raise NashDomClientError(
-                "В __NEXT_DATA__ отсутствует props.pageProps.houses"
-            )
+            raise NashDomClientError("В __NEXT_DATA__ отсутствует props.pageProps.houses")
         props_mapping = cast(Dict[str, Any], props)
         page_props = props_mapping.get("pageProps")
         if not isinstance(page_props, dict):
-            raise NashDomClientError(
-                "В __NEXT_DATA__ отсутствует props.pageProps.houses"
-            )
+            raise NashDomClientError("В __NEXT_DATA__ отсутствует props.pageProps.houses")
         page_props_mapping = cast(Dict[str, Any], page_props)
         houses: Any = page_props_mapping.get("houses")
 
@@ -993,11 +933,7 @@ class NashDomClient:
                         "Кнопка «Показать ещё» определена неоднозначно: "
                         f"локатор нашёл {len(elements)} элементов"
                     )
-                if (
-                    len(elements) == 1
-                    and elements[0].is_displayed()
-                    and elements[0].is_enabled()
-                ):
+                if len(elements) == 1 and elements[0].is_displayed() and elements[0].is_enabled():
                     return locator
             except NashDomClientError:
                 raise
@@ -1112,9 +1048,7 @@ class NashDomClient:
 
         while api_total is None or len(objects) < min(target_count, api_total):
             remaining = (
-                target_count
-                if api_total is None
-                else min(target_count, api_total) - len(objects)
+                target_count if api_total is None else min(target_count, api_total) - len(objects)
             )
             batch = self._fetch_api_batch(
                 captured_request,
@@ -1129,9 +1063,7 @@ class NashDomClient:
                     raise NashDomClientError("XHR вернул объекты при total=0")
                 return []
             if not batch.items:
-                raise NashDomClientError(
-                    "XHR вернул пустую порцию до достижения заявленного total"
-                )
+                raise NashDomClientError("XHR вернул пустую порцию до достижения заявленного total")
 
             batch_ids = [self._read_raw_object_id(item) for item in batch.items]
             if not any(object_id not in seen_ids for object_id in batch_ids):
@@ -1184,9 +1116,7 @@ class NashDomClient:
         status = raw_result.get("status")
         body = raw_result.get("body")
         if status is None:
-            raise NashDomUnavailableError(
-                f"Сетевая ошибка browser-context fetch с offset={offset}"
-            )
+            raise NashDomUnavailableError(f"Сетевая ошибка browser-context fetch с offset={offset}")
         if not isinstance(status, int) or isinstance(status, bool):
             raise NashDomClientError("Browser-context fetch вернул некорректный HTTP status")
 
@@ -1253,9 +1183,7 @@ class NashDomClient:
                 f"NashDom временно недоступен во время {operation}: HTTP {status}"
             )
         if status == 403 and NashDomClient._contains_challenge(body):
-            raise NashDomUnavailableError(
-                f"NashDom вернул anti-bot/challenge во время {operation}"
-            )
+            raise NashDomUnavailableError(f"NashDom вернул anti-bot/challenge во время {operation}")
         raise NashDomClientError(
             f"NashDom вернул неожиданный HTTP status во время {operation}: {status}"
         )

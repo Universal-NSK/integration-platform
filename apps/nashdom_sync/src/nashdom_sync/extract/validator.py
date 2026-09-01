@@ -37,9 +37,7 @@ class SourceDataValidator:
             if extracted_object.region_id not in expected_region_ids
         }
         if unexpected_region_ids:
-            formatted_ids = ", ".join(
-                str(region_id) for region_id in sorted(unexpected_region_ids)
-            )
+            formatted_ids = ", ".join(str(region_id) for region_id in sorted(unexpected_region_ids))
             raise SourceDataValidationError(
                 f"NashDom вернул объекты из незапрошенных регионов: {formatted_ids}"
             )
@@ -59,27 +57,21 @@ class SourceDataValidator:
             seen_ids.add(developer.id)
 
         if duplicate_ids:
-            formatted_ids = ", ".join(
-                str(developer_id) for developer_id in sorted(duplicate_ids)
-            )
+            formatted_ids = ", ".join(str(developer_id) for developer_id in sorted(duplicate_ids))
             raise SourceDataValidationError(
                 f"В наборе NashDom повторяются ID застройщиков: {formatted_ids}"
             )
 
         unexpected_ids = seen_ids - expected_developer_ids
         if unexpected_ids:
-            formatted_ids = ", ".join(
-                str(developer_id) for developer_id in sorted(unexpected_ids)
-            )
+            formatted_ids = ", ".join(str(developer_id) for developer_id in sorted(unexpected_ids))
             raise SourceDataValidationError(
                 f"NashDom вернул незапрошенных застройщиков: {formatted_ids}"
             )
 
         missing_ids = expected_developer_ids - seen_ids
         if missing_ids:
-            formatted_ids = ", ".join(
-                str(developer_id) for developer_id in sorted(missing_ids)
-            )
+            formatted_ids = ", ".join(str(developer_id) for developer_id in sorted(missing_ids))
             raise SourceDataValidationError(
                 f"NashDom не вернул запрошенных застройщиков: {formatted_ids}"
             )
@@ -100,8 +92,7 @@ class SourceDataValidator:
 
         if duplicate_ids:
             formatted_ids = ", ".join(
-                str(company_group_id)
-                for company_group_id in sorted(duplicate_ids)
+                str(company_group_id) for company_group_id in sorted(duplicate_ids)
             )
             raise SourceDataValidationError(
                 f"В наборе NashDom повторяются ID групп компаний: {formatted_ids}"
@@ -110,8 +101,7 @@ class SourceDataValidator:
         unexpected_ids = seen_ids - expected_company_group_ids
         if unexpected_ids:
             formatted_ids = ", ".join(
-                str(company_group_id)
-                for company_group_id in sorted(unexpected_ids)
+                str(company_group_id) for company_group_id in sorted(unexpected_ids)
             )
             raise SourceDataValidationError(
                 f"NashDom вернул незапрошенные группы компаний: {formatted_ids}"
@@ -155,9 +145,7 @@ class SourceDataValidator:
                 f"{formatted_conflicts}"
             )
 
-        developer_group_ids = {
-            developer.id: developer.company_group_id for developer in developers
-        }
+        developer_group_ids = {developer.id: developer.company_group_id for developer in developers}
         for developer_id, group_ids in object_group_ids.items():
             developer_group_id = developer_group_ids.get(developer_id)
             if developer_group_id is None:

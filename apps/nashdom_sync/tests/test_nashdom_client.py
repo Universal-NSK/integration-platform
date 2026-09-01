@@ -267,9 +267,7 @@ def test_all_developer_ids_on_first_full_page_stop_early(
     client, _ = _client()
     first_page = [{"devId": 10000 + index} for index in range(1000)]
     first_page[306] = _raw_developer(306)
-    fetch_batch = Mock(
-        return_value=_DeveloperApiBatch(items=first_page, count=4735)
-    )
+    fetch_batch = Mock(return_value=_DeveloperApiBatch(items=first_page, count=4735))
     read_detail = Mock()
     monkeypatch.setattr(client, "_fetch_developer_batch", fetch_batch)
     monkeypatch.setattr(client, "_read_detail_developer", read_detail)
@@ -327,9 +325,7 @@ def test_short_developer_page_ends_bulk_before_missing_detail_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client, _ = _client()
-    fetch_batch = Mock(
-        return_value=_DeveloperApiBatch(items=[_raw_developer(306)], count=4735)
-    )
+    fetch_batch = Mock(return_value=_DeveloperApiBatch(items=[_raw_developer(306)], count=4735))
 
     def detail_after_bulk(developer_id: int) -> Dict[str, Any]:
         assert fetch_batch.call_count == 1
@@ -456,8 +452,7 @@ def test_developer_detail_url_uses_confirmed_nashdom_route() -> None:
     )
 
     assert result == (
-        "https://xn--80az8a.xn--d1aqf.xn--p1ai/"
-        "сервисы/единый-реестр-застройщиков/застройщик/306"
+        "https://xn--80az8a.xn--d1aqf.xn--p1ai/сервисы/единый-реестр-застройщиков/застройщик/306"
     )
     assert "/сервисы/единый-реестр-застройщиков/застройщик/306" in result
     assert "/developer/306" not in result
@@ -473,8 +468,7 @@ def test_open_developer_detail_uses_confirmed_nashdom_url(
     client._open_developer_detail(306)  # pyright: ignore[reportPrivateUsage]
 
     driver.get.assert_called_once_with(
-        "https://xn--80az8a.xn--d1aqf.xn--p1ai/"
-        "сервисы/единый-реестр-застройщиков/застройщик/306"
+        "https://xn--80az8a.xn--d1aqf.xn--p1ai/сервисы/единый-реестр-застройщиков/застройщик/306"
     )
     check_page.assert_called_once_with("застройщика 306")
 
@@ -540,8 +534,8 @@ def test_developer_bulk_http_200_challenge_is_unavailable() -> None:
     driver.execute_async_script.return_value = {
         "status": 200,
         "body": (
-            "<!DOCTYPE html><noscript><meta http-equiv=\"refresh\" "
-            "content=\"0; url=/challenge\"></noscript>"
+            '<!DOCTYPE html><noscript><meta http-equiv="refresh" '
+            'content="0; url=/challenge"></noscript>'
         ),
     }
 
@@ -598,9 +592,7 @@ def test_detail_ssr_rejects_mismatching_page_id(
     next_data = {
         "props": {
             "pageProps": {"id": 999},
-            "initialState": {
-                "erz": {"builder": {"builder": _raw_developer(306)}}
-            },
+            "initialState": {"erz": {"builder": {"builder": _raw_developer(306)}}},
         }
     }
     monkeypatch.setattr(client, "_open_developer_detail", Mock())
@@ -621,9 +613,7 @@ def test_detail_ssr_rejects_malformed_status_code(
     next_data = {
         "props": {
             "pageProps": {"statusCode": "200", "id": 306},
-            "initialState": {
-                "erz": {"builder": {"builder": _raw_developer(306)}}
-            },
+            "initialState": {"erz": {"builder": {"builder": _raw_developer(306)}}},
         }
     }
     monkeypatch.setattr(client, "_open_developer_detail", Mock())
@@ -644,9 +634,7 @@ def test_detail_ssr_unavailable_status_is_unavailable(
     next_data = {
         "props": {
             "pageProps": {"statusCode": 503, "id": 306},
-            "initialState": {
-                "erz": {"builder": {"builder": _raw_developer(306)}}
-            },
+            "initialState": {"erz": {"builder": {"builder": _raw_developer(306)}}},
         }
     }
     monkeypatch.setattr(client, "_open_developer_detail", Mock())
@@ -667,9 +655,7 @@ def test_detail_ssr_rejects_mismatching_builder_developer_id(
     next_data = {
         "props": {
             "pageProps": {"id": 306},
-            "initialState": {
-                "erz": {"builder": {"builder": _raw_developer(999)}}
-            },
+            "initialState": {"erz": {"builder": {"builder": _raw_developer(999)}}},
         }
     }
     monkeypatch.setattr(client, "_open_developer_detail", Mock())
@@ -771,9 +757,7 @@ def test_company_group_missing_primary_uses_detail_fallback(
 
     result = client.get_company_groups({5776})
 
-    assert result == [
-        ExtractedCompanyGroup(id=5776, name="Группа компаний 5776")
-    ]
+    assert result == [ExtractedCompanyGroup(id=5776, name="Группа компаний 5776")]
     read_detail.assert_called_once_with(5776)
 
 
@@ -864,9 +848,7 @@ def test_company_group_detail_ssr_extracts_confirmed_info_path(
     next_data = {
         "props": {
             "pageProps": {"statusCode": 200, "id": "5776"},
-            "initialState": {
-                "erz": {"companyGroup": {"info": raw_company_group}}
-            },
+            "initialState": {"erz": {"companyGroup": {"info": raw_company_group}}},
         },
         "query": {"id": "5776"},
     }
@@ -897,9 +879,7 @@ def test_company_group_detail_ssr_rejects_mismatching_route_id(
     next_data = {
         "props": {
             "pageProps": {"id": page_id},
-            "initialState": {
-                "erz": {"companyGroup": {"info": _raw_company_group(5776)}}
-            },
+            "initialState": {"erz": {"companyGroup": {"info": _raw_company_group(5776)}}},
         },
         "query": {"id": query_id},
     }
@@ -921,9 +901,7 @@ def test_company_group_detail_ssr_rejects_mismatching_info_id(
     next_data = {
         "props": {
             "pageProps": {"id": "5776"},
-            "initialState": {
-                "erz": {"companyGroup": {"info": _raw_company_group(6442)}}
-            },
+            "initialState": {"erz": {"companyGroup": {"info": _raw_company_group(6442)}}},
         }
     }
     monkeypatch.setattr(client, "_open_company_group_detail", Mock())

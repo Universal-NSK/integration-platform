@@ -311,9 +311,7 @@ def test_provide_wraps_invalid_toml_with_parser_cause(
         app_config=invalid_toml if invalid_source == "sync.toml" else VALID_APP_CONFIG,
         paths_config=(invalid_toml if invalid_source == "sync.paths.toml" else VALID_PATHS_CONFIG),
         region_catalog=(
-            invalid_toml
-            if invalid_source == "sync.region_slugs.toml"
-            else VALID_REGION_CATALOG
+            invalid_toml if invalid_source == "sync.region_slugs.toml" else VALID_REGION_CATALOG
         ),
     )
 
@@ -339,9 +337,7 @@ def test_provide_wraps_invalid_utf8_with_runtime_file_cause(
         app_config=invalid_utf8 if invalid_source == "sync.toml" else VALID_APP_CONFIG,
         paths_config=(invalid_utf8 if invalid_source == "sync.paths.toml" else VALID_PATHS_CONFIG),
         region_catalog=(
-            invalid_utf8
-            if invalid_source == "sync.region_slugs.toml"
-            else VALID_REGION_CATALOG
+            invalid_utf8 if invalid_source == "sync.region_slugs.toml" else VALID_REGION_CATALOG
         ),
     )
 

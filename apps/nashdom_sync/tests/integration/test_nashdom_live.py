@@ -90,9 +90,7 @@ def test_live_xhr_path_returns_typed_objects() -> None:
     if not objects:
         pytest.skip("В исследуемом регионе сейчас нет строящихся объектов")
     if len(objects) <= 20:
-        pytest.skip(
-            "В исследуемом регионе сейчас недостаточно объектов для проверки XHR-ветки"
-        )
+        pytest.skip("В исследуемом регионе сейчас недостаточно объектов для проверки XHR-ветки")
 
     assert 21 <= len(objects) <= limit
     assert all(isinstance(extracted_object, ExtractedObject) for extracted_object in objects)
@@ -158,13 +156,8 @@ def test_live_company_groups_returns_confirmed_records() -> None:
         driver.quit()
 
     assert len(company_groups) == 2
-    assert all(
-        isinstance(company_group, ExtractedCompanyGroup)
-        for company_group in company_groups
-    )
+    assert all(isinstance(company_group, ExtractedCompanyGroup) for company_group in company_groups)
     assert {company_group.id for company_group in company_groups} == {5776, 6442}
-    company_groups_by_id = {
-        company_group.id: company_group for company_group in company_groups
-    }
+    company_groups_by_id = {company_group.id: company_group for company_group in company_groups}
     assert company_groups_by_id[5776].name == "2МЕН ГРУПП ДЕВЕЛОПМЕНТ"
     assert company_groups_by_id[6442].name == "АРХСТРОЙ ГРУПП"

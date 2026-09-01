@@ -54,9 +54,7 @@ class SettingsProvider:
         """Вернуть единую проверенную конфигурацию синхронизации."""
         app_settings = self._load_toml(self._paths.config_file(_APP_CONFIG_NAME))
         path_settings = self._load_toml(self._paths.program_data_file(_PATHS_CONFIG_NAME))
-        region_catalog = self._load_toml(
-            self._paths.config_file(_REGION_SLUGS_CONFIG_NAME)
-        )
+        region_catalog = self._load_toml(self._paths.config_file(_REGION_SLUGS_CONFIG_NAME))
         merged_settings = self._merge_settings(app_settings, path_settings)
         resolved_settings = self._resolve_paths(merged_settings)
         resolved_settings[_REGION_CATALOG_KEY] = region_catalog

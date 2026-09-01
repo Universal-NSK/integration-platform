@@ -71,10 +71,7 @@ class NashDomDataNormalizer:
         raw_developers: List[Dict[str, Any]],
     ) -> List[ExtractedDeveloper]:
         """Нормализовать застройщиков из подтверждённой flat ERZ-схемы."""
-        return [
-            self._normalize_developer(raw_developer)
-            for raw_developer in raw_developers
-        ]
+        return [self._normalize_developer(raw_developer) for raw_developer in raw_developers]
 
     def normalize_company_groups(
         self,
@@ -113,8 +110,7 @@ class NashDomDataNormalizer:
             return ExtractedCompanyGroup(id=company_group_id, name=name)
         except ValueError as exc:
             raise NashDomNormalizationError(
-                f"Группа компаний NashDom с ID {company_group_id} "
-                f"нарушает контракт: {exc}"
+                f"Группа компаний NashDom с ID {company_group_id} нарушает контракт: {exc}"
             ) from exc
 
     def _normalize_developer(
@@ -273,20 +269,12 @@ class NashDomDataNormalizer:
         )
 
         if raw_legal_address is not None and not isinstance(raw_legal_address, str):
-            raise NashDomNormalizationError(
-                "Юридический адрес застройщика должен быть строкой"
-            )
+            raise NashDomNormalizationError("Юридический адрес застройщика должен быть строкой")
         if raw_fact_address is not None and not isinstance(raw_fact_address, str):
-            raise NashDomNormalizationError(
-                "Фактический адрес застройщика должен быть строкой"
-            )
+            raise NashDomNormalizationError("Фактический адрес застройщика должен быть строкой")
 
-        legal_address = (
-            raw_legal_address.strip() if raw_legal_address is not None else None
-        )
-        fact_address = (
-            raw_fact_address.strip() if raw_fact_address is not None else None
-        )
+        legal_address = raw_legal_address.strip() if raw_legal_address is not None else None
+        fact_address = raw_fact_address.strip() if raw_fact_address is not None else None
         legal_address = legal_address or None
         fact_address = fact_address or None
 
@@ -421,8 +409,7 @@ class NashDomDataNormalizer:
             if required:
                 expected_paths = ", ".join(".".join(path) for path in paths)
                 raise NashDomNormalizationError(
-                    f"Не найдено обязательное поле «{field_name}» "
-                    f"по source-путям: {expected_paths}"
+                    f"Не найдено обязательное поле «{field_name}» по source-путям: {expected_paths}"
                 )
             return None
 
@@ -490,9 +477,7 @@ class NashDomDataNormalizer:
             except ValueError:
                 continue
 
-        raise NashDomNormalizationError(
-            f"Неизвестный формат даты публикации: {value!r}"
-        )
+        raise NashDomNormalizationError(f"Неизвестный формат даты публикации: {value!r}")
 
     @staticmethod
     def _normalize_commissioning_period(value: Any) -> CommissioningPeriod:
@@ -519,9 +504,7 @@ class NashDomDataNormalizer:
                 quarter=_ROMAN_QUARTERS[quarter_match.group(1)],
             )
 
-        raise NashDomNormalizationError(
-            f"Неизвестный формат периода ввода: {value!r}"
-        )
+        raise NashDomNormalizationError(f"Неизвестный формат периода ввода: {value!r}")
 
     @staticmethod
     def _normalize_object_type(value: Any) -> ExtractedObjectTypeEnum:
@@ -531,6 +514,4 @@ class NashDomDataNormalizer:
         try:
             return ExtractedObjectTypeEnum(value.strip())
         except ValueError as exc:
-            raise NashDomNormalizationError(
-                f"Неизвестный тип объекта NashDom: {value!r}"
-            ) from exc
+            raise NashDomNormalizationError(f"Неизвестный тип объекта NashDom: {value!r}") from exc

@@ -35,6 +35,7 @@ class _ExtractRunStats:
     company_groups_duration_seconds: float = 0.0
     total_duration_seconds: float = 0.0
 
+
 class ExtractService:
     """Управляет последовательностью получения данных внутри Extract scope."""
 
@@ -50,8 +51,7 @@ class ExtractService:
             region_count=len(settings.nashdom.regions),
             objects_per_region_limit=settings.nashdom.objects_to_parse_count,
             objects_requested_limit=(
-                len(settings.nashdom.regions)
-                * settings.nashdom.objects_to_parse_count
+                len(settings.nashdom.regions) * settings.nashdom.objects_to_parse_count
             ),
         )
 

@@ -41,10 +41,7 @@ def _extracted_developer() -> ExtractedDeveloper:
         ogrn="1067746424899",
         region_id=72,
         legal_address="Тюменская область, Город Тюмень, Улица Республики дом 143А",
-        fact_address=(
-            "Тюменская обл, г.о. город Тюмень, г. Тюмень, "
-            "ул. Республики, д.143А"
-        ),
+        fact_address=("Тюменская обл, г.о. город Тюмень, г. Тюмень, ул. Республики, д.143А"),
         contact_name="Шулепов Петр Владимирович",
         phone="+79091697719",
         email="2men-group@mail.ru",
@@ -194,13 +191,8 @@ def test_extracted_developer_to_dict_is_stable() -> None:
         "kpp": "720301001",
         "ogrn": "1067746424899",
         "region_id": 72,
-        "legal_address": (
-            "Тюменская область, Город Тюмень, Улица Республики дом 143А"
-        ),
-        "fact_address": (
-            "Тюменская обл, г.о. город Тюмень, г. Тюмень, "
-            "ул. Республики, д.143А"
-        ),
+        "legal_address": ("Тюменская область, Город Тюмень, Улица Республики дом 143А"),
+        "fact_address": ("Тюменская обл, г.о. город Тюмень, г. Тюмень, ул. Республики, д.143А"),
         "contact_name": "Шулепов Петр Владимирович",
         "phone": "+79091697719",
         "email": "2men-group@mail.ru",
@@ -242,6 +234,4 @@ def test_extract_result_serializes_typed_company_groups() -> None:
         company_groups=[_extracted_company_group()],
     )
 
-    assert result.to_dict()["company_groups"] == [
-        {"id": 5776, "name": "2МЕН ГРУПП ДЕВЕЛОПМЕНТ"}
-    ]
+    assert result.to_dict()["company_groups"] == [{"id": 5776, "name": "2МЕН ГРУПП ДЕВЕЛОПМЕНТ"}]

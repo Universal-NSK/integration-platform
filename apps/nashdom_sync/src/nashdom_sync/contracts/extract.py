@@ -41,10 +41,7 @@ class BaseExtractedDataclass:
             return tuple(BaseExtractedDataclass._serialize(item) for item in items)
         if isinstance(value, dict):
             mapping = cast(Dict[Any, Any], value)
-            return {
-                key: BaseExtractedDataclass._serialize(item)
-                for key, item in mapping.items()
-            }
+            return {key: BaseExtractedDataclass._serialize(item) for key, item in mapping.items()}
         return value
 
 
@@ -106,12 +103,8 @@ class ExtractedObject(BaseExtractedDataclass):
             raise ValueError("ID региона должен быть положительным целым числом")
         if not _is_positive_integer(self.developer_id):
             raise ValueError("ID застройщика должен быть положительным целым числом")
-        if self.company_group_id is not None and not _is_positive_integer(
-            self.company_group_id
-        ):
-            raise ValueError(
-                "ID группы компаний должен быть положительным целым числом или None"
-            )
+        if self.company_group_id is not None and not _is_positive_integer(self.company_group_id):
+            raise ValueError("ID группы компаний должен быть положительным целым числом или None")
 
 
 @dataclass(frozen=True)
@@ -157,12 +150,8 @@ class ExtractedDeveloper(BaseExtractedDataclass):
             raise ValueError("ID региона должен быть положительным целым числом")
         if self.url is not None and not _is_non_empty_string(self.url):
             raise ValueError("URL застройщика должен быть непустой строкой или None")
-        if self.company_group_id is not None and not _is_positive_integer(
-            self.company_group_id
-        ):
-            raise ValueError(
-                "ID группы компаний должен быть положительным целым числом или None"
-            )
+        if self.company_group_id is not None and not _is_positive_integer(self.company_group_id):
+            raise ValueError("ID группы компаний должен быть положительным целым числом или None")
 
 
 @dataclass(frozen=True)
@@ -174,9 +163,7 @@ class ExtractedCompanyGroup(BaseExtractedDataclass):
 
     def __post_init__(self) -> None:
         if not _is_positive_integer(self.id):
-            raise ValueError(
-                "ID группы компаний должен быть положительным целым числом"
-            )
+            raise ValueError("ID группы компаний должен быть положительным целым числом")
         if not _is_non_empty_string(self.name):
             raise ValueError("Название группы компаний не должно быть пустым")
 
