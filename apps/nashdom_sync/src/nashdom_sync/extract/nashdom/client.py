@@ -1,8 +1,10 @@
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple, cast
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
+from platform_logging import log_event
 from selenium.common.exceptions import (
     ElementClickInterceptedException,
     ElementNotInteractableException,
@@ -26,6 +28,8 @@ from nashdom_sync.extract.exceptions import (
     NashDomUnavailableError,
 )
 from nashdom_sync.extract.nashdom.normalizer import NashDomDataNormalizer
+
+logger = logging.getLogger(__name__)
 
 _WAIT_TIMEOUT_SECONDS = 30
 _API_BATCH_SIZE = 20
@@ -239,6 +243,14 @@ class NashDomClient:
         normalized_developers = self._normalizer.normalize_developers(
             [raw_developers[developer_id] for developer_id in sorted(developer_ids)]
         )
+        if missing_ids:
+            log_event(
+                logger,
+                logging.WARNING,
+                "developer_detail_fallback_used",
+                fallback_count=len(missing_ids),
+                developer_ids=sorted(missing_ids),
+            )
         return sorted(normalized_developers, key=lambda developer: developer.id)
 
     def get_company_groups(
@@ -252,11 +264,14 @@ class NashDomClient:
         self._configure_timeouts()
         self._ensure_nashdom_context()
         raw_company_groups: Dict[int, Dict[str, Any]] = {}
+        fallback_ids: List[int] = []
 
         for company_group_id in sorted(company_group_ids):
             raw_company_group = self._fetch_company_group(company_group_id)
             if raw_company_group is None:
                 raw_company_group = self._read_detail_company_group(company_group_id)
+                if raw_company_group is not None:
+                    fallback_ids.append(company_group_id)
             if raw_company_group is not None:
                 raw_company_groups[company_group_id] = raw_company_group
 
@@ -266,6 +281,14 @@ class NashDomClient:
                 for company_group_id in sorted(raw_company_groups)
             ]
         )
+        if fallback_ids:
+            log_event(
+                logger,
+                logging.WARNING,
+                "company_group_ssr_fallback_used",
+                fallback_count=len(fallback_ids),
+                company_group_ids=sorted(fallback_ids),
+            )
         return sorted(normalized_company_groups, key=lambda company_group: company_group.id)
 
     def _fetch_company_group(

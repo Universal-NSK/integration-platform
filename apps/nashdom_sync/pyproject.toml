@@ -10,6 +10,7 @@ requires-python = ">=3.8,<3.9"
 dependencies = [
     "pydantic==1.10.26",
     "runtime-files",
+    "platform-logging",
     "selenium==4.27.1",
     "tomli>=2.4.1",
 ]
@@ -19,4 +20,5 @@ requires = ["uv_build>=0.12.3,<0.13.0"]
 build-backend = "uv_build"
 
 [tool.uv.sources]
+platform-logging = { workspace = true }
 runtime-files = { workspace = true }

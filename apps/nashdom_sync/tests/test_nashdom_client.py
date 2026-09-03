@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Dict, List, Tuple, cast
 from unittest.mock import Mock
 
@@ -7,7 +8,13 @@ from nashdom_sync.contracts import (
     NashDomExtractSettings,
     NashDomRegion,
 )
-from nashdom_sync.extract import NashDomClientError, NashDomUnavailableError
+from nashdom_sync.extract import (
+    NashDomClientError,
+    NashDomUnavailableError,
+    SourceDataValidationError,
+    SourceDataValidator,
+)
+from nashdom_sync.extract.exceptions import NashDomNormalizationError
 from nashdom_sync.extract.nashdom.client import (
     _INSTALL_INTERCEPTOR_SCRIPT,  # pyright: ignore[reportPrivateUsage]
     _PUBLIC_BROWSER_FETCH_SCRIPT,  # pyright: ignore[reportPrivateUsage]
@@ -16,6 +23,7 @@ from nashdom_sync.extract.nashdom.client import (
     _CapturedRequest,  # pyright: ignore[reportPrivateUsage]
     _DeveloperApiBatch,  # pyright: ignore[reportPrivateUsage]
 )
+from platform_logging.formatter import DETAILS_ATTRIBUTE, EVENT_ATTRIBUTE
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.remote.webdriver import WebDriver
 
@@ -954,3 +962,127 @@ def test_company_group_detail_404_remains_missing(
     )
 
     assert client._read_detail_company_group(5776) is None  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+def test_developer_fallback_logging(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    fallback: bool,
+) -> None:
+    client, _ = _client()
+    bulk = {306: _raw_developer(306)}
+    if not fallback:
+        bulk.update({500: _raw_developer(500), 700: _raw_developer(700)})
+    monkeypatch.setattr(client, "_collect_bulk_developers", Mock(return_value=bulk))
+    detail = Mock(side_effect=_raw_developer)
+    monkeypatch.setattr(client, "_read_detail_developer", detail)
+    caplog.set_level(logging.WARNING, logger="nashdom_sync.extract.nashdom.client")
+
+    result = client.get_developers({700, 306, 500})
+
+    assert [developer.id for developer in result] == [306, 500, 700]
+    records = [r for r in caplog.records if r.name == "nashdom_sync.extract.nashdom.client"]
+    if fallback:
+        assert len(records) == 1
+        assert records[0].levelno == logging.WARNING
+        assert records[0].__dict__[EVENT_ATTRIBUTE] == "developer_detail_fallback_used"
+        assert records[0].__dict__[DETAILS_ATTRIBUTE] == {
+            "fallback_count": 2,
+            "developer_ids": [500, 700],
+        }
+    else:
+        assert records == []
+        detail.assert_not_called()
+
+
+@pytest.mark.parametrize("malformed", [False, True])
+def test_developer_failed_fallback_has_no_success_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    malformed: bool,
+) -> None:
+    client, _ = _client()
+    monkeypatch.setattr(client, "_collect_bulk_developers", Mock(return_value={}))
+    detail = (
+        Mock(return_value={"devId": 306})
+        if malformed
+        else Mock(side_effect=NashDomClientError("detail unavailable"))
+    )
+    monkeypatch.setattr(client, "_read_detail_developer", detail)
+
+    with pytest.raises((NashDomClientError, NashDomNormalizationError)):
+        client.get_developers({306})
+
+    assert not [
+        r
+        for r in caplog.records
+        if r.__dict__.get(EVENT_ATTRIBUTE) == "developer_detail_fallback_used"
+    ]
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+def test_company_group_fallback_logging(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    fallback: bool,
+) -> None:
+    client, driver = _client()
+
+    def fetch(script: str, url: str) -> Dict[str, Any]:
+        group_id = int(url.rsplit("/", 1)[1])
+        data = {"code": "404"} if fallback and group_id != 100 else _raw_company_group(group_id)
+        return {"status": 200, "body": {"errcode": "0", "data": data}}
+
+    driver.execute_async_script.side_effect = fetch
+    detail = Mock(side_effect=_raw_company_group)
+    monkeypatch.setattr(client, "_read_detail_company_group", detail)
+    caplog.set_level(logging.WARNING, logger="nashdom_sync.extract.nashdom.client")
+
+    result = client.get_company_groups({6442, 100, 5776})
+
+    assert [group.id for group in result] == [100, 5776, 6442]
+    records = [r for r in caplog.records if r.name == "nashdom_sync.extract.nashdom.client"]
+    if fallback:
+        assert len(records) == 1
+        assert records[0].levelno == logging.WARNING
+        assert records[0].__dict__[EVENT_ATTRIBUTE] == "company_group_ssr_fallback_used"
+        assert records[0].__dict__[DETAILS_ATTRIBUTE] == {
+            "fallback_count": 2,
+            "company_group_ids": [5776, 6442],
+        }
+    else:
+        assert records == []
+        detail.assert_not_called()
+
+
+@pytest.mark.parametrize("failure", ["missing", "malformed", "exception"])
+def test_company_group_failed_fallback_has_no_success_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    failure: str,
+) -> None:
+    client, driver = _client()
+    driver.execute_async_script.return_value = {
+        "status": 200,
+        "body": {"errcode": "0", "data": {"code": "404"}},
+    }
+    detail = Mock(return_value=None if failure == "missing" else {"devGroupId": 5776})
+    if failure == "exception":
+        detail.side_effect = NashDomClientError("SSR unavailable")
+    monkeypatch.setattr(client, "_read_detail_company_group", detail)
+
+    if failure == "missing":
+        result = client.get_company_groups({5776})
+        assert result == []
+        with pytest.raises(SourceDataValidationError):
+            SourceDataValidator().validate_company_groups(result, {5776})
+    else:
+        with pytest.raises((NashDomClientError, NashDomNormalizationError)):
+            client.get_company_groups({5776})
+
+    assert not [
+        r
+        for r in caplog.records
+        if r.__dict__.get(EVENT_ATTRIBUTE) == "company_group_ssr_fallback_used"
+    ]
