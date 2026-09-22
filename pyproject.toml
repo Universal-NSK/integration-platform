@@ -86,6 +86,8 @@ addopts = [
 ]
 
 markers = [
+    "gateway_integration: реальный HTTP Gateway с fake Bitrix transport",
+    "bitrix_live: opt-in read-only тесты реального Bitrix24 через Gateway",
     "browser: реальный smoke test Selenium, ChromeDriver и Chrome",
     "nashdom_live: интеграционный тест против живого сайта наш.дом.рф",
 ]

@@ -1,0 +1,290 @@
+from dataclasses import FrozenInstanceError
+from typing import Any, Callable, Dict, Iterator, List, Tuple, Type
+from unittest.mock import Mock
+
+import pytest
+from nashdom_sync.bitrix_crm import (
+    BitrixGatewayError,
+    BitrixRequestFailedError,
+    BitrixRequestUnknownError,
+    ClientBitrixCRM,
+)
+from nashdom_sync.bitrix_crm._contracts import (
+    GatewayCallResult,
+    GatewayExecutionStatus,
+    RetryPolicy,
+)
+
+Operation = Callable[[ClientBitrixCRM], Any]
+
+
+def success(data: Dict[str, Any]) -> GatewayCallResult:
+    return GatewayCallResult(GatewayExecutionStatus.SUCCESS, data, 200, None, None, 1)
+
+
+@pytest.fixture
+def crm(monkeypatch: pytest.MonkeyPatch) -> Iterator[Tuple[ClientBitrixCRM, Mock]]:
+    gateway = Mock()
+    constructor = Mock(return_value=gateway)
+    monkeypatch.setattr("nashdom_sync.bitrix_crm.client.GatewayHttpClient", constructor)
+    client = ClientBitrixCRM(gateway_url="http://gateway.invalid", timeout=3.0)
+    constructor.assert_called_once_with(base_url="http://gateway.invalid", timeout=3.0)
+    try:
+        yield client, gateway
+    finally:
+        client.close()
+
+
+READ_CASES: List[Tuple[Operation, str, Dict[str, Any], Any, Any]] = [
+    (lambda c: c.profile(), "profile", {}, {"ID": "1"}, {"ID": "1"}),
+    (
+        lambda c: c.list_items(4, filter_={"id": 7}, select=["id"]),
+        "crm.item.list",
+        {"entityTypeId": 4, "filter": {"id": 7}, "select": ["id"]},
+        {"items": [{"id": 7}]},
+        [{"id": 7}],
+    ),
+    (
+        lambda c: c.get_item_fields(4),
+        "crm.item.fields",
+        {"entityTypeId": 4},
+        {"fields": {"title": {"type": "string"}}},
+        {"title": {"type": "string"}},
+    ),
+    (
+        lambda c: c.list_statuses("SOURCE"),
+        "crm.status.list",
+        {"filter": {"ENTITY_ID": "SOURCE"}},
+        [{"ID": "1"}],
+        [{"ID": "1"}],
+    ),
+    (
+        lambda c: c.list_users(filter_={"NAME": "Иван"}),
+        "user.get",
+        {"FILTER": {"NAME": "Иван"}},
+        [{"ID": "1"}],
+        [{"ID": "1"}],
+    ),
+    (lambda c: c.list_requisite_presets(), "crm.requisite.preset.list", {}, [], []),
+    (
+        lambda c: c.list_requisites(filter_={"ENTITY_ID": 7}),
+        "crm.requisite.list",
+        {"filter": {"ENTITY_ID": 7}},
+        [],
+        [],
+    ),
+    (
+        lambda c: c.list_addresses(filter_={"ENTITY_ID": 8}),
+        "crm.address.list",
+        {"filter": {"ENTITY_ID": 8}},
+        [],
+        [],
+    ),
+    (
+        lambda c: c.get_address_fields(),
+        "crm.address.fields",
+        {},
+        {"ADDRESS_2": {}},
+        {"ADDRESS_2": {}},
+    ),
+    (lambda c: c.list_address_types(), "crm.enum.addresstype", {}, [{"ID": 6}], [{"ID": 6}]),
+    (
+        lambda c: c.list_owner_types(),
+        "crm.enum.ownertype",
+        {},
+        [{"ID": 1050, "NAME": "Группа компаний"}],
+        [{"ID": 1050, "NAME": "Группа компаний"}],
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "operation,method,payload,result,expected",
+    READ_CASES,
+)
+def test_read_contracts(
+    crm: Tuple[ClientBitrixCRM, Mock],
+    operation: Operation,
+    method: str,
+    payload: Dict[str, Any],
+    result: Any,
+    expected: Any,
+) -> None:
+    client, gateway = crm
+    gateway.call.return_value = success({"result": result})
+    assert operation(client) == expected
+    gateway.call.assert_called_once_with(method, payload, RetryPolicy.SAFE)
+
+
+WRITE_CASES: List[Tuple[Operation, str, Dict[str, Any], Any, Any]] = [
+    (
+        lambda c: c.add_item(4, {"title": "Компания"}),
+        "crm.item.add",
+        {"entityTypeId": 4, "fields": {"title": "Компания"}},
+        {"item": {"id": 7}},
+        7,
+    ),
+    (
+        lambda c: c.add_requisite({"RQ_INN": "001", "RQ_KPP": "002", "RQ_OGRN": "003"}),
+        "crm.requisite.add",
+        {"fields": {"RQ_INN": "001", "RQ_KPP": "002", "RQ_OGRN": "003"}},
+        8,
+        8,
+    ),
+    (
+        lambda c: c.add_address({"ADDRESS_2": "Улица Пушкина"}),
+        "crm.address.add",
+        {"fields": {"ADDRESS_2": "Улица Пушкина"}},
+        True,
+        None,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "operation,method,payload,result,expected",
+    WRITE_CASES,
+)
+def test_write_contracts(
+    crm: Tuple[ClientBitrixCRM, Mock],
+    operation: Operation,
+    method: str,
+    payload: Dict[str, Any],
+    result: Any,
+    expected: Any,
+) -> None:
+    client, gateway = crm
+    gateway.call.return_value = success({"result": result})
+    assert operation(client) == expected
+    gateway.call.assert_called_once_with(method, payload, RetryPolicy.NEVER)
+
+
+PAGE_CASES: List[Tuple[Operation, bool]] = [
+    (lambda c: c.list_items(4, filter_={}, select=[]), True),
+    (lambda c: c.list_statuses("INDUSTRY"), False),
+    (lambda c: c.list_users(), False),
+    (lambda c: c.list_requisite_presets(), False),
+    (lambda c: c.list_requisites(), False),
+    (lambda c: c.list_addresses(), False),
+]
+
+
+@pytest.mark.parametrize(
+    "operation,items",
+    PAGE_CASES,
+)
+def test_all_pages(crm: Tuple[ClientBitrixCRM, Mock], operation: Operation, items: bool) -> None:
+    client, gateway = crm
+    first = [{"id": i} for i in range(50)]
+    second = [{"id": 50}]
+    gateway.call.side_effect = [
+        success({"result": {"items": first} if items else first, "next": 50, "total": 51}),
+        success({"result": {"items": second} if items else second, "total": 51}),
+    ]
+    assert operation(client) == first + second
+    before: Dict[str, Any] = gateway.call.call_args_list[0].args[1]
+    after: Dict[str, Any] = gateway.call.call_args_list[1].args[1]
+    assert "start" not in before
+    assert after == dict(before, start=50)
+    assert all(call.args[2] is RetryPolicy.SAFE for call in gateway.call.call_args_list)
+
+
+@pytest.mark.parametrize("next_value", [0, -1, True, "50", None, [], {}])
+def test_bad_next_is_rejected(crm: Tuple[ClientBitrixCRM, Mock], next_value: Any) -> None:
+    client, gateway = crm
+    gateway.call.return_value = success({"result": [], "next": next_value})
+    with pytest.raises(BitrixGatewayError, match="next"):
+        client.list_users()
+    assert gateway.call.call_count == 1
+
+
+def test_repeated_cursor_is_rejected(crm: Tuple[ClientBitrixCRM, Mock]) -> None:
+    client, gateway = crm
+    gateway.call.return_value = success({"result": [], "next": 50})
+    with pytest.raises(BitrixGatewayError, match="next"):
+        client.list_users()
+    assert gateway.call.call_count == 2
+
+
+def test_filter_and_select_are_not_mutated(crm: Tuple[ClientBitrixCRM, Mock]) -> None:
+    client, gateway = crm
+    filter_: Dict[str, Any] = {"id": 1}
+    select: List[str] = ["id"]
+    gateway.call.side_effect = [
+        success({"result": {"items": []}, "next": 50}),
+        success({"result": {"items": []}}),
+    ]
+    assert client.list_items(4, filter_=filter_, select=select) == []
+    assert filter_ == {"id": 1}
+    assert select == ["id"]
+
+
+@pytest.mark.parametrize(
+    "status,error",
+    [
+        (GatewayExecutionStatus.FAILED, BitrixRequestFailedError),
+        (GatewayExecutionStatus.UNKNOWN, BitrixRequestUnknownError),
+    ],
+)
+def test_failure_diagnostics_hide_server_text(
+    crm: Tuple[ClientBitrixCRM, Mock],
+    status: GatewayExecutionStatus,
+    error: Type[Exception],
+) -> None:
+    client, gateway = crm
+    gateway.call.return_value = GatewayCallResult(
+        status,
+        None,
+        400,
+        "ACCESS_DENIED",
+        "token=private https://secret.invalid/rest/key",
+        1,
+    )
+    with pytest.raises(error) as exc:
+        client.add_requisite({})
+    message = str(exc.value)
+    assert "crm.requisite.add" in message and "400" in message and "ACCESS_DENIED" in message
+    assert "private" not in message and "secret.invalid" not in message
+    assert gateway.call.call_count == 1
+
+
+BAD_CASES: List[Tuple[Operation, Any]] = [
+    (lambda c: c.profile(), []),
+    (lambda c: c.list_users(), {}),
+    (lambda c: c.list_users(), [1]),
+    (lambda c: c.list_items(4), []),
+    (lambda c: c.get_item_fields(4), {}),
+    (lambda c: c.get_address_fields(), []),
+    (lambda c: c.add_item(4, {}), {"item": {"id": True}}),
+    (lambda c: c.add_requisite({}), "8"),
+    (lambda c: c.add_requisite({}), 0),
+    (lambda c: c.add_address({}), 1),
+    (lambda c: c.add_address({}), False),
+]
+
+
+@pytest.mark.parametrize(
+    "operation,result",
+    BAD_CASES,
+)
+def test_bad_bitrix_result(
+    crm: Tuple[ClientBitrixCRM, Mock],
+    operation: Operation,
+    result: Any,
+) -> None:
+    client, gateway = crm
+    gateway.call.return_value = success({"result": result})
+    with pytest.raises(BitrixGatewayError):
+        operation(client)
+
+
+def test_close_delegates(crm: Tuple[ClientBitrixCRM, Mock]) -> None:
+    client, gateway = crm
+    client.close()
+    gateway.close.assert_called_once_with()
+
+
+def test_result_is_frozen() -> None:
+    result = success({"result": True})
+    with pytest.raises(FrozenInstanceError):
+        result.attempt_count = 2  # pyright: ignore[reportAttributeAccessIssue]
