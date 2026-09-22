@@ -251,7 +251,11 @@ name = "nashdom-sync"
 version = "0.1.0"
 source = { editable = "apps/nashdom_sync" }
 dependencies = [
+<<<<<<< HEAD
     { name = "httpx" },
+=======
+    { name = "platform-logging" },
+>>>>>>> 8ded28d1590d6f782e8b277915c909ba585ce97b
     { name = "pydantic" },
     { name = "runtime-files" },
     { name = "selenium" },
@@ -260,7 +264,11 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+<<<<<<< HEAD
     { name = "httpx", specifier = "==0.28.1" },
+=======
+    { name = "platform-logging", editable = "packages/platform_logging" },
+>>>>>>> 8ded28d1590d6f782e8b277915c909ba585ce97b
     { name = "pydantic", specifier = "==1.10.26" },
     { name = "runtime-files", editable = "packages/runtime_files" },
     { name = "selenium", specifier = "==4.27.1" },

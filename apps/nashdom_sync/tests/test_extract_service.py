@@ -1,3 +1,4 @@
+import logging
 from dataclasses import replace
 from datetime import date
 from typing import List, Optional, Sequence, Set, cast
@@ -16,6 +17,7 @@ from nashdom_sync.contracts import (
     NashDomRegion,
 )
 from nashdom_sync.extract import ExtractService, SourceDataValidationError
+from platform_logging.formatter import DETAILS_ATTRIBUTE, EVENT_ATTRIBUTE
 from selenium.webdriver.remote.webdriver import WebDriver
 
 
@@ -251,3 +253,112 @@ def test_extract_requests_union_company_group_ids_without_duplicates(
 
     client.get_company_groups.assert_called_once_with({5776, 6442})
     assert {company_group.id for company_group in result.company_groups} == {5776, 6442}
+
+
+def test_extract_logging_summary(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = Mock()
+    client.get_objects.return_value = [_object()]
+    client.get_developers.return_value = [_developer(company_group_id=5776)]
+    client.get_company_groups.return_value = [_company_group()]
+    monkeypatch.setattr(service_module, "NashDomClient", Mock(return_value=client))
+    caplog.set_level(logging.INFO, logger=service_module.__name__)
+
+    ExtractService().extract(cast(WebDriver, Mock()), _settings())
+
+    records = [r for r in caplog.records if r.name == service_module.__name__]
+    assert [r.__dict__[EVENT_ATTRIBUTE] for r in records] == [
+        "extract_started",
+        "objects_extracted",
+        "developers_extracted",
+        "company_groups_extracted",
+        "extract_completed",
+    ]
+    assert all(r.levelno == logging.INFO for r in records)
+    assert records[0].__dict__[DETAILS_ATTRIBUTE] == {
+        "region_count": 1,
+        "region_codes": [22],
+        "objects_per_region_limit": 5,
+        "objects_requested_limit": 5,
+    }
+    summary = records[-1].__dict__[DETAILS_ATTRIBUTE]
+    for field in (
+        "region_count",
+        "objects_received",
+        "developer_ids_requested",
+        "developers_received",
+        "company_group_ids_requested",
+        "company_groups_received",
+    ):
+        assert summary[field] == 1
+    assert summary["objects_requested_limit"] == 5
+    for stage in ("objects", "developers", "company_groups", "total"):
+        assert summary[f"{stage}_duration_seconds"] >= 0
+    for record, count_fields in zip(
+        records[1:4],
+        (
+            ("objects_requested_limit", "objects_received"),
+            ("developer_ids_requested", "developers_received"),
+            ("company_group_ids_requested", "company_groups_received"),
+        ),
+    ):
+        details = record.__dict__[DETAILS_ATTRIBUTE]
+        assert details["duration_seconds"] >= 0
+        for field in count_fields:
+            assert details[field] == summary[field]
+
+
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "objects",
+        "developers",
+        "company_group_consistency",
+        "company_groups",
+    ],
+)
+def test_extract_failure_logs_partial_stats_and_reraises(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    stage: str,
+) -> None:
+    client = Mock()
+    validator = Mock()
+    client.get_objects.return_value = [_object()]
+    client.get_developers.return_value = [_developer(company_group_id=5776)]
+    client.get_company_groups.return_value = [_company_group()]
+    error = SourceDataValidationError("diagnostic failure")
+    if stage == "company_group_consistency":
+        validator.validate_company_group_consistency.side_effect = error
+    else:
+        getattr(client, f"get_{stage}").side_effect = error
+    monkeypatch.setattr(service_module, "NashDomClient", Mock(return_value=client))
+    monkeypatch.setattr(service_module, "SourceDataValidator", Mock(return_value=validator))
+    caplog.set_level(logging.INFO, logger=service_module.__name__)
+
+    with pytest.raises(SourceDataValidationError) as raised:
+        ExtractService().extract(cast(WebDriver, Mock()), _settings())
+
+    assert raised.value is error
+    records = [r for r in caplog.records if r.name == service_module.__name__]
+    assert "extract_completed" not in [r.__dict__[EVENT_ATTRIBUTE] for r in records]
+    failed = records[-1]
+    assert failed.__dict__[EVENT_ATTRIBUTE] == "extract_failed"
+    assert failed.levelno == logging.ERROR
+    assert failed.exc_info is None
+    details = failed.__dict__[DETAILS_ATTRIBUTE]
+    assert details["stage"] == stage
+    assert details["exception_type"] == "SourceDataValidationError"
+    assert details["error"] == "diagnostic failure"
+    assert details["objects_received"] == (0 if stage == "objects" else 1)
+    assert details["developer_ids_requested"] == (0 if stage == "objects" else 1)
+    assert details["developers_received"] == (
+        1 if stage in ("company_groups", "company_group_consistency") else 0
+    )
+    assert details["company_group_ids_requested"] == (1 if stage == "company_groups" else 0)
+    assert details["company_groups_received"] == 0
+    assert details["elapsed_seconds"] >= 0
+    for name in ("objects", "developers", "company_groups", "total"):
+        assert details[f"{name}_duration_seconds"] >= 0
