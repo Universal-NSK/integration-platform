@@ -17,6 +17,7 @@ from nashdom_sync.providers.settings_provider.exceptions import (
 )
 
 _APP_CONFIG_NAME = "sync.toml"
+_MANAGER_REGION_CONFIG_NAME = "sync.manager-region.toml"
 _PATHS_CONFIG_NAME = "sync.paths.toml"
 _REGION_SLUGS_CONFIG_NAME = "sync.region_slugs.toml"
 _REGION_CATALOG_KEY = "_region_catalog"
@@ -56,6 +57,10 @@ class SettingsProvider:
         path_settings = self._load_toml(self._paths.program_data_file(_PATHS_CONFIG_NAME))
         region_catalog = self._load_toml(self._paths.config_file(_REGION_SLUGS_CONFIG_NAME))
         merged_settings = self._merge_settings(app_settings, path_settings)
+        manager_settings = self._load_toml(
+            self._paths.program_data_file(_MANAGER_REGION_CONFIG_NAME)
+        )
+        merged_settings = self._merge_settings(merged_settings, manager_settings)
         resolved_settings = self._resolve_paths(merged_settings)
         resolved_settings[_REGION_CATALOG_KEY] = region_catalog
 

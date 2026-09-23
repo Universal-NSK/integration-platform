@@ -4,6 +4,7 @@ from typing import Optional, Tuple, Union
 import pytest
 import tomli
 from nashdom_sync.contracts import (
+    BitrixClientSettings,
     BrowserSettings,
     ExtractionSettings,
     NashDomExtractSettings,
@@ -23,15 +24,21 @@ VALID_APP_CONFIG = """
 [browser]
 headless = false
 
+[bitrix]
+gateway_url = "http://127.0.0.1:8765"
+timeout = 20.0
+
 [extract.nashdom]
 objects_to_parse_count = 35
+""".strip()
 
+VALID_MANAGER_CONFIG = """
 [region]
-default_assigned_by_id = 12
+default_assigned_by_name = "Алексей Пелин"
 
 [region.assignment]
-4 = 28
-22 = 12
+4 = "Юлия Шумакова"
+22 = "Алексей Пелин"
 """.strip()
 
 VALID_PATHS_CONFIG = """
@@ -60,6 +67,7 @@ def _provider(
     tmp_path: Path,
     app_config: Optional[Union[str, bytes]] = VALID_APP_CONFIG,
     paths_config: Optional[Union[str, bytes]] = VALID_PATHS_CONFIG,
+    manager_config: Optional[Union[str, bytes]] = VALID_MANAGER_CONFIG,
     region_catalog: Optional[Union[str, bytes]] = VALID_REGION_CATALOG,
 ) -> Tuple[SettingsProvider, Path]:
     repo_root = (tmp_path / "repository").resolve()
@@ -80,6 +88,12 @@ def _provider(
             paths_config_path.write_bytes(paths_config)
         else:
             paths_config_path.write_text(paths_config, encoding="utf-8")
+    if manager_config is not None:
+        manager_config_path = program_data_root / "sync.manager-region.toml"
+        if isinstance(manager_config, bytes):
+            manager_config_path.write_bytes(manager_config)
+        else:
+            manager_config_path.write_text(manager_config, encoding="utf-8")
     if region_catalog is not None:
         region_catalog_path = config_root / "sync.region_slugs.toml"
         if isinstance(region_catalog, bytes):
@@ -126,9 +140,12 @@ def test_provide_merges_sources_and_resolves_nonexistent_browser_paths(
             slug="республика-алтай",
         ),
     )
+    assert isinstance(settings.bitrix, BitrixClientSettings)
+    assert settings.bitrix.gateway_url == "http://127.0.0.1:8765"
+    assert settings.bitrix.timeout == 20.0
     assert isinstance(settings.region, RegionSettings)
-    assert settings.region.default_assigned_by_id == 12
-    assert settings.region.assignment == {4: 28, 22: 12}
+    assert settings.region.default_assigned_by_name == "Алексей Пелин"
+    assert settings.region.assignment == {4: "Юлия Шумакова", 22: "Алексей Пелин"}
 
 
 def test_provide_keeps_assignment_region_without_slug_out_of_extract(tmp_path: Path) -> None:
@@ -167,7 +184,7 @@ slug = "республика-алтай"
 
 
 def test_provide_rejects_assignment_region_missing_from_catalog(tmp_path: Path) -> None:
-    provider, _ = _provider(tmp_path, app_config=f"{VALID_APP_CONFIG}\n99 = 34")
+    provider, _ = _provider(tmp_path, manager_config=f'{VALID_MANAGER_CONFIG}\n99 = "Менеджер"')
 
     with pytest.raises(ConfigurationError) as exc_info:
         provider.provide()
@@ -224,14 +241,14 @@ def test_provide_converts_numeric_assignment_keys_to_int(tmp_path: Path) -> None
 
     settings = provider.provide()
 
-    assert settings.region.assignment == {4: 28, 22: 12}
+    assert settings.region.assignment == {4: "Юлия Шумакова", 22: "Алексей Пелин"}
     assert all(isinstance(code, int) for code in settings.region.assignment)
 
 
 def test_provide_rejects_non_numeric_assignment_key(tmp_path: Path) -> None:
     provider, _ = _provider(
         tmp_path,
-        app_config=f"{VALID_APP_CONFIG}\nnot_a_region_code = 34",
+        manager_config=f'{VALID_MANAGER_CONFIG}\nnot_a_region_code = "Менеджер"',
     )
 
     with pytest.raises(ConfigurationError) as exc_info:
@@ -275,7 +292,7 @@ driver_path = "drivers/chromedriver.exe"
 
 @pytest.mark.parametrize(
     "missing_source",
-    ["sync.toml", "sync.paths.toml", "sync.region_slugs.toml"],
+    ["sync.toml", "sync.paths.toml", "sync.region_slugs.toml", "sync.manager-region.toml"],
 )
 def test_provide_reports_missing_configuration_file(
     tmp_path: Path,
@@ -283,6 +300,9 @@ def test_provide_reports_missing_configuration_file(
 ) -> None:
     provider, _ = _provider(
         tmp_path,
+        manager_config=None
+        if missing_source == "sync.manager-region.toml"
+        else VALID_MANAGER_CONFIG,
         app_config=None if missing_source == "sync.toml" else VALID_APP_CONFIG,
         paths_config=None if missing_source == "sync.paths.toml" else VALID_PATHS_CONFIG,
         region_catalog=(
@@ -299,7 +319,7 @@ def test_provide_reports_missing_configuration_file(
 
 @pytest.mark.parametrize(
     "invalid_source",
-    ["sync.toml", "sync.paths.toml", "sync.region_slugs.toml"],
+    ["sync.toml", "sync.paths.toml", "sync.region_slugs.toml", "sync.manager-region.toml"],
 )
 def test_provide_wraps_invalid_toml_with_parser_cause(
     tmp_path: Path,
@@ -308,6 +328,9 @@ def test_provide_wraps_invalid_toml_with_parser_cause(
     invalid_toml = "[browser\nheadless = false"
     provider, _ = _provider(
         tmp_path,
+        manager_config=invalid_toml
+        if invalid_source == "sync.manager-region.toml"
+        else VALID_MANAGER_CONFIG,
         app_config=invalid_toml if invalid_source == "sync.toml" else VALID_APP_CONFIG,
         paths_config=(invalid_toml if invalid_source == "sync.paths.toml" else VALID_PATHS_CONFIG),
         region_catalog=(
@@ -325,7 +348,7 @@ def test_provide_wraps_invalid_toml_with_parser_cause(
 
 @pytest.mark.parametrize(
     "invalid_source",
-    ["sync.toml", "sync.paths.toml", "sync.region_slugs.toml"],
+    ["sync.toml", "sync.paths.toml", "sync.region_slugs.toml", "sync.manager-region.toml"],
 )
 def test_provide_wraps_invalid_utf8_with_runtime_file_cause(
     tmp_path: Path,
@@ -334,6 +357,9 @@ def test_provide_wraps_invalid_utf8_with_runtime_file_cause(
     invalid_utf8 = b"\xff"
     provider, _ = _provider(
         tmp_path,
+        manager_config=invalid_utf8
+        if invalid_source == "sync.manager-region.toml"
+        else VALID_MANAGER_CONFIG,
         app_config=invalid_utf8 if invalid_source == "sync.toml" else VALID_APP_CONFIG,
         paths_config=(invalid_utf8 if invalid_source == "sync.paths.toml" else VALID_PATHS_CONFIG),
         region_catalog=(
@@ -460,3 +486,128 @@ def test_recursive_merge_reports_full_nested_overlap_path(tmp_path: Path) -> Non
 
 def test_configuration_overlap_error_is_configuration_error() -> None:
     assert issubclass(ConfigurationOverlapError, ConfigurationError)
+
+
+@pytest.mark.parametrize("timeout", ["0.0", "-1.0"])
+def test_provide_rejects_nonpositive_bitrix_timeout(tmp_path: Path, timeout: str) -> None:
+    provider, _ = _provider(
+        tmp_path, app_config=VALID_APP_CONFIG.replace("timeout = 20.0", f"timeout = {timeout}")
+    )
+    with pytest.raises(ConfigurationError, match="bitrix.timeout"):
+        provider.provide()
+
+
+@pytest.mark.parametrize("url", ["", "   "])
+def test_provide_rejects_empty_gateway_url(tmp_path: Path, url: str) -> None:
+    provider, _ = _provider(
+        tmp_path, app_config=VALID_APP_CONFIG.replace("http://127.0.0.1:8765", url)
+    )
+    with pytest.raises(ConfigurationError, match="bitrix.gateway_url"):
+        provider.provide()
+
+
+def test_provide_loads_manager_for_region_54(tmp_path: Path) -> None:
+    provider, _ = _provider(
+        tmp_path,
+        manager_config=VALID_MANAGER_CONFIG + '\n54 = "Альмира Хасанова"',
+        region_catalog=VALID_REGION_CATALOG
+        + '\n[[regions]]\ncode = 54\nname = "Новосибирская область"',
+    )
+    assert provider.provide().region.assignment[54] == "Альмира Хасанова"
+
+
+@pytest.mark.parametrize(
+    "old, new, parameter",
+    [
+        (
+            'default_assigned_by_name = "Алексей Пелин"',
+            'default_assigned_by_name = ""',
+            "region.default_assigned_by_name",
+        ),
+        (
+            'default_assigned_by_name = "Алексей Пелин"',
+            'default_assigned_by_name = "   "',
+            "region.default_assigned_by_name",
+        ),
+        ('4 = "Юлия Шумакова"', '4 = ""', "region.assignment.4"),
+        ('4 = "Юлия Шумакова"', '4 = "   "', "region.assignment.4"),
+        ('4 = "Юлия Шумакова"', "4 = 28", "region.assignment.4"),
+        (
+            'default_assigned_by_name = "Алексей Пелин"',
+            "default_assigned_by_name = 12",
+            "region.default_assigned_by_name",
+        ),
+        (
+            "default_assigned_by_name",
+            "default_assigned_by_id",
+            "неизвестный параметр region.default_assigned_by_id",
+        ),
+    ],
+)
+def test_provide_rejects_invalid_manager_settings(
+    tmp_path: Path, old: str, new: str, parameter: str
+) -> None:
+    provider, _ = _provider(tmp_path, manager_config=VALID_MANAGER_CONFIG.replace(old, new))
+    with pytest.raises(ConfigurationError, match=parameter):
+        provider.provide()
+
+
+def test_provide_rejects_duplicate_normalized_region(tmp_path: Path) -> None:
+    provider, _ = _provider(tmp_path, manager_config=VALID_MANAGER_CONFIG + '\n"04" = "Менеджер"')
+    with pytest.raises(ConfigurationError, match="region.assignment"):
+        provider.provide()
+
+
+def test_provide_rejects_overlap_with_private_settings(tmp_path: Path) -> None:
+    provider, _ = _provider(tmp_path, app_config=VALID_APP_CONFIG + "\n" + VALID_MANAGER_CONFIG)
+    with pytest.raises(ConfigurationOverlapError, match="region.default_assigned_by_name"):
+        provider.provide()
+
+
+@pytest.mark.parametrize(
+    "app_extra, manager_extra, parameter",
+    [
+        ("\n[bitrix.retry]\nattempts = 3", "", "bitrix.retry"),
+        ("", "\n[region.extra]\nvalue = 1", "region.extra"),
+        ("\n[unknown]\nvalue = 1", "", "unknown"),
+    ],
+)
+def test_provide_forbids_new_unknown_fields(
+    tmp_path: Path, app_extra: str, manager_extra: str, parameter: str
+) -> None:
+    provider, _ = _provider(
+        tmp_path,
+        app_config=VALID_APP_CONFIG + app_extra,
+        manager_config=VALID_MANAGER_CONFIG + manager_extra,
+    )
+    with pytest.raises(ConfigurationError, match="неизвестный параметр " + parameter):
+        provider.provide()
+
+
+@pytest.mark.parametrize("code", [True, False, 4.5, "invalid", "4.0"])
+def test_region_contract_rejects_invalid_key(code: object) -> None:
+    with pytest.raises(ValidationError):
+        RegionSettings.parse_obj(
+            {"default_assigned_by_name": "Алексей Пелин", "assignment": {code: "Менеджер"}}
+        )
+
+
+def test_region_contract_rejects_mixed_duplicate_keys() -> None:
+    with pytest.raises(ValidationError, match="указан несколько раз"):
+        RegionSettings.parse_obj(
+            {
+                "default_assigned_by_name": "Алексей Пелин",
+                "assignment": {4: "Первый", "04": "Второй"},
+            }
+        )
+
+
+def test_new_settings_are_immutable(tmp_path: Path) -> None:
+    provider, _ = _provider(tmp_path)
+    settings = provider.provide()
+    with pytest.raises(TypeError, match="immutable"):
+        settings.bitrix.timeout = 10.0
+    with pytest.raises(TypeError, match="immutable"):
+        settings.region.default_assigned_by_name = "Другой"
+    with pytest.raises(TypeError, match="immutable"):
+        settings.bitrix = settings.bitrix

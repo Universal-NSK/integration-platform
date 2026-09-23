@@ -10,6 +10,7 @@ from nashdom_sync.contracts.extract import (
     ExtractResult,
 )
 from nashdom_sync.contracts.settings import (
+    BitrixClientSettings,
     BrowserSettings,
     ExtractionSettings,
     NashDomExtractSettings,
@@ -20,6 +21,7 @@ from nashdom_sync.contracts.settings import (
 
 __all__ = [
     "BaseExtractedDataclass",
+    "BitrixClientSettings",
     "BrowserSettings",
     "CommissioningPeriod",
     "ExtractedCompanyGroup",

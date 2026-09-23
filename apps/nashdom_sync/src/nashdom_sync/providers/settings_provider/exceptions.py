@@ -3,9 +3,9 @@ class ConfigurationError(Exception):
 
 
 class ConfigurationOverlapError(ConfigurationError):
-    """Один параметр определён в обоих файлах настроек."""
+    """Один параметр определён в нескольких файлах настроек."""
 
     def __init__(self, parameter_path: str) -> None:
         super().__init__(
-            f"Параметр {parameter_path} определён одновременно в sync.toml и sync.paths.toml"
+            f"Параметр {parameter_path} определён одновременно в нескольких источниках: sync.toml, sync.paths.toml, sync.manager-region.toml"
         )
