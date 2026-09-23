@@ -113,6 +113,11 @@ class ClientBitrixCRM:
 
         return self._call_all_pages("user.get", {} if filter_ is None else {"FILTER": filter_})
 
+    def search_users(self, query: str) -> List[Dict[str, Any]]:
+        """Найти пользователей по FIND, получить все страницы с SAFE retry."""
+
+        return self._call_all_pages("user.search", {"FILTER": {"FIND": query}})
+
     def list_requisite_presets(self) -> List[Dict[str, Any]]:
         """Получить шаблоны реквизитов."""
 

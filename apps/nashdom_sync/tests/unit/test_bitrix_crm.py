@@ -288,3 +288,41 @@ def test_result_is_frozen() -> None:
     result = success({"result": True})
     with pytest.raises(FrozenInstanceError):
         result.attempt_count = 2  # pyright: ignore[reportAttributeAccessIssue]
+
+
+def test_search_users_pagination(crm: Tuple[ClientBitrixCRM, Mock]) -> None:
+    client, gateway = crm
+    gateway.call.side_effect = [
+        success({"result": [{"ID": "1"}], "next": 50}),
+        success({"result": [{"ID": "2"}]}),
+    ]
+    assert client.search_users("Иванов Иван") == [{"ID": "1"}, {"ID": "2"}]
+    assert gateway.call.call_count == 2
+    assert gateway.call.call_args_list[0].args == (
+        "user.search",
+        {"FILTER": {"FIND": "Иванов Иван"}},
+        RetryPolicy.SAFE,
+    )
+    assert gateway.call.call_args_list[1].args == (
+        "user.search",
+        {"FILTER": {"FIND": "Иванов Иван"}, "start": 50},
+        RetryPolicy.SAFE,
+    )
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"result": {}},
+        {"result": [None]},
+        {"result": [], "next": "50"},
+        {"result": [], "next": 0},
+    ],
+)
+def test_search_users_rejects_malformed_page(
+    crm: Tuple[ClientBitrixCRM, Mock], data: Dict[str, Any]
+) -> None:
+    client, gateway = crm
+    gateway.call.return_value = success(data)
+    with pytest.raises(BitrixGatewayError):
+        client.search_users("Иванов")

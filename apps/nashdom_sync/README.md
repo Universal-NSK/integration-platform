@@ -100,3 +100,47 @@ Live-write тестов нет. В рамках реализации live-тес
 - `GatewayHttpClient.call` возвращает `GatewayCallResult`, а private
   `ClientBitrixCRM._call` возвращает `data` или выбрасывает исключение;
 - добавлен private helper `_call_all_pages`.
+
+
+## CrmProvider
+
+`CrmProvider(bitrix_client_settings: BitrixClientSettings)` из
+`nashdom_sync.providers.crm_provider` предоставляет единственный публичный метод
+`provide(region_settings: RegionSettings) -> CrmContext`. Каждый вызов создаёт
+принадлежащий Provider клиент и закрывает его в `finally`; повторные последовательные
+вызовы допустимы. Один экземпляр не предназначен для конкурентных вызовов.
+Контракты — frozen dataclass в `contracts/crm.py`.
+
+`providers/crm_provider/fields.py` содержит FieldSpec и точные метаданные восьми
+полей, предоставленные владельцем портала 24.09.2026. Основной поиск — exact title.
+При нескольких совпадениях upperName проверяется только среди них; при отсутствии
+title — среди всех полей. Только уникальный fallback успешен и пишет WARNING
+`crm_field_upper_name_fallback` через platform_logging с причиной `title_missing`
+или `title_ambiguous`, без данных записей и секретов. Адрес лида — пользовательское
+поле «Адрес», адрес реквизитов — системный ADDRESS_2.
+
+SPA «Группа компаний» разрешается по NAME из существующего `list_owner_types()`.
+Этот метод возвращает именно entityTypeId, включая SPA:
+https://apidocs.bitrix24.ru/api-reference/crm/auxiliary/enum/crm-enum-owner-type.html
+Дополнительный crm.type.list не требуется. Стандартные типы — lead=1, company=4,
+requisite=8. Справочники соответствуют `docs/запросы.md`; для SOURCE, INDUSTRY и
+COMPANY_TYPE используется STATUS_ID, а не ID записи справочника. «Жилое»/«Нежилое»
+передаются строками: поле «Тип объекта» имеет type=string.
+
+Клиент дополнен только `search_users(query: str) -> List[Dict[str, Any]]`:
+user.search с FILTER[FIND], полной пагинацией и SAFE retry.
+https://apidocs.bitrix24.ru/api-reference/user/user-search.html
+Менеджер сопоставляется по LAST_NAME NAME SECOND_NAME с нормализацией пробелов и
+регистра, без fuzzy matching. При наличии ACTIVE и USER_TYPE исключаются неактивные
+и не-employee. configured_name сохраняется для Transform; одинаковые строки
+конфигурации запрашиваются один раз.
+
+Existing содержит все записи выбранных типов. Отсутствующие source ID не
+отфильтровываются: по контракту это ошибка. Целочисленные double (42.0/"42.00")
+нормализуются, дробные ID, bool и повторные source ID отклоняются.
+
+Доменные ошибки: CrmProviderError, CrmMissingSemanticError,
+CrmAmbiguousSemanticError, CrmInvalidDataError. Обязательная стадия либо успешна
+полностью, либо provide поднимает ошибку; частичный контекст не возвращается.
+Тесты Provider находятся в tests/unit/test_crm_provider.py; сеть в unit-тестах
+блокируется общей fixture. Transform, Load и C4 не изменены.

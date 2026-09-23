@@ -1,5 +1,24 @@
 """Публичные контракты обмена данными NashDom Sync."""
 
+from nashdom_sync.contracts.crm import (
+    AddressFieldsBindings,
+    CompanyGroupFieldsBindings,
+    CrmAddressType,
+    CrmBuildingType,
+    CrmContext,
+    CrmEmployee,
+    CrmEntityFields,
+    CrmEntityTypeId,
+    CrmMultiField,
+    CrmReferences,
+    CrmStructure,
+    DeveloperFieldsBindings,
+    ExistingCrmEntities,
+    ExistingCrmEntity,
+    LeadFieldsBindings,
+    MultiFieldFieldsBindings,
+    RequisiteFieldsBindings,
+)
 from nashdom_sync.contracts.extract import (
     BaseExtractedDataclass,
     CommissioningPeriod,
@@ -20,6 +39,23 @@ from nashdom_sync.contracts.settings import (
 )
 
 __all__ = [
+    "AddressFieldsBindings",
+    "CompanyGroupFieldsBindings",
+    "CrmAddressType",
+    "CrmBuildingType",
+    "CrmContext",
+    "CrmEmployee",
+    "CrmEntityFields",
+    "CrmEntityTypeId",
+    "CrmMultiField",
+    "CrmReferences",
+    "CrmStructure",
+    "DeveloperFieldsBindings",
+    "ExistingCrmEntities",
+    "ExistingCrmEntity",
+    "LeadFieldsBindings",
+    "MultiFieldFieldsBindings",
+    "RequisiteFieldsBindings",
     "BaseExtractedDataclass",
     "BitrixClientSettings",
     "BrowserSettings",

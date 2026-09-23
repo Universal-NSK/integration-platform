@@ -200,3 +200,22 @@ def test_failed_is_distinct_from_unknown(local_gateway: LocalGateway) -> None:
     with pytest.raises(BitrixRequestFailedError, match="ACCESS_DENIED"):
         local_gateway.client.profile()
     assert len(local_gateway.transport.calls) == 1
+
+
+def test_search_users_pagination_and_safe_retry(local_gateway: LocalGateway) -> None:
+    local_gateway.transport.outcomes.extend(
+        [
+            TransportError("Fake disconnect", outcome_uncertain=True),
+            reply([{"ID": "1", "NAME": "Иван"}], next=50),
+            reply([{"ID": "2", "NAME": "Иван"}]),
+        ]
+    )
+    assert local_gateway.client.search_users("Иван") == [
+        {"ID": "1", "NAME": "Иван"},
+        {"ID": "2", "NAME": "Иван"},
+    ]
+    assert local_gateway.transport.calls == [
+        ("user.search", {"FILTER": {"FIND": "Иван"}}),
+        ("user.search", {"FILTER": {"FIND": "Иван"}}),
+        ("user.search", {"FILTER": {"FIND": "Иван"}, "start": 50}),
+    ]
