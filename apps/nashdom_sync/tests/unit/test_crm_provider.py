@@ -244,8 +244,6 @@ def test_existing_normalization(setup: Tuple[CrmProvider, Mock, Mock], source: A
 @pytest.mark.parametrize(
     "records",
     [
-        [{"id": 1, "s": 3}, {"id": 2, "s": "3.00"}],
-        [{"id": 1, "s": 3}, {"id": 1, "s": 3}],
         [{"s": 1}],
         [{"id": 1}],
         [{"id": True, "s": 1}],
@@ -255,14 +253,14 @@ def test_existing_normalization(setup: Tuple[CrmProvider, Mock, Mock], source: A
         *[
             [{"id": 1, "s": value}]
             for value in (
-                None,
                 True,
                 0,
                 -1,
                 1.5,
                 "1.5",
-                "",
                 "nan",
+                "abc",
+                " 42 ",
                 float("nan"),
                 float("inf"),
                 cast(List[Any], []),
@@ -277,6 +275,23 @@ def test_existing_invalid(setup: Tuple[CrmProvider, Mock, Mock], records: Any) -
     client.list_items.return_value = records
     with pytest.raises(CrmInvalidDataError):
         provider._load_existing_entities(1, "s")
+
+
+@pytest.mark.parametrize("entity_type_id", [1, 4, 1050])
+def test_existing_skips_unlinked_records(
+    setup: Tuple[CrmProvider, Mock, Mock], entity_type_id: int
+) -> None:
+    provider, client, _ = setup
+    client.list_items.side_effect = None
+    client.list_items.return_value = [
+        {"id": 2, "s": None},
+        {"id": 4, "s": ""},
+        {"id": 5, "s": " \t\n "},
+        {"id": 6, "s": "42.00"},
+    ]
+    assert provider._load_existing_entities(entity_type_id, "s") == (ExistingCrmEntity(42, 6),)
+    client.list_items.return_value = [{"id": 2, "s": None}]
+    assert provider._load_existing_entities(entity_type_id, "s") == ()
 
 
 def test_managers_deduplicate_and_normalize(
@@ -297,12 +312,17 @@ def test_managers_deduplicate_and_normalize(
         ([], CrmMissingSemanticError),
         ([{"ID": 1, "NAME": "Другой"}], CrmMissingSemanticError),
         (
-            [{"ID": 1, "NAME": "Иван"}, {"ID": 2, "NAME": "Иван"}],
+            [
+                {"ID": 1, "NAME": "Иван", "LAST_NAME": "Иванов"},
+                {"ID": 2, "NAME": "Иван", "LAST_NAME": "Иванов"},
+            ],
             CrmAmbiguousSemanticError,
         ),
-        ([{"ID": 1, "NAME": "Иван", "ACTIVE": "N"}], CrmMissingSemanticError),
-        ([{"ID": 1, "NAME": "Иван", "USER_TYPE": "extranet"}], CrmMissingSemanticError),
-        ([{"ID": False, "NAME": "Иван"}], CrmInvalidDataError),
+        (
+            [{"ID": 1, "NAME": "Иван", "LAST_NAME": "Иванов", "USER_TYPE": "extranet"}],
+            CrmMissingSemanticError,
+        ),
+        ([{"ID": False, "NAME": "Иван", "LAST_NAME": "Иванов"}], CrmInvalidDataError),
         ([{"ID": 1, "NAME": 5}], CrmInvalidDataError),
     ],
 )
@@ -313,7 +333,7 @@ def test_manager_errors(
 ) -> None:
     setup[1].search_users.return_value = candidates
     with pytest.raises(error):
-        setup[0]._resolve_manager("Иван")
+        setup[0]._resolve_manager("Иван Иванов")
 
 
 @pytest.mark.parametrize(
@@ -479,3 +499,88 @@ def test_semantic_invalid_ids(
             provider._resolve_entity_type_ids()
         else:
             provider._build_references()
+
+
+@pytest.mark.parametrize("kind", ["leads", "developers", "company_groups"])
+@pytest.mark.parametrize("second_crm_id", [8, 3])
+def test_existing_duplicate_policy(
+    setup: Tuple[CrmProvider, Mock, Mock], kind: str, second_crm_id: int
+) -> None:
+    provider, client, _ = setup
+    structure = provider._build_structure()
+    entity_type = {
+        "leads": structure.entity_types.lead,
+        "developers": structure.entity_types.company,
+        "company_groups": structure.entity_types.company_group,
+    }[kind]
+
+    def items(entity: int, select: List[str]) -> List[Dict[str, Any]]:
+        if entity != entity_type:
+            return []
+        return [
+            {"id": 8, select[1]: 42},
+            {"id": second_crm_id, select[1]: "42.00"},
+            {"id": 9, select[1]: 43},
+        ]
+
+    client.list_items.side_effect = items
+    if kind == "leads":
+        expected = (ExistingCrmEntity(42, 8), ExistingCrmEntity(43, 9))
+        assert provider._build_existing(structure).leads == expected
+        assert provider._build_existing(structure).leads == expected
+    else:
+        with pytest.raises(CrmInvalidDataError, match="повтор source_id=42"):
+            provider._build_existing(structure)
+
+
+@pytest.mark.parametrize("name", ["Алексей Пелин", "Пелин Алексей", "  АЛЕКСЕЙ  Пелин "])
+@pytest.mark.parametrize("active", [False, "N", True, None, "unexpected", {"invalid": 1}])
+def test_manager_short_name_ignores_active(
+    setup: Tuple[CrmProvider, Mock, Mock], name: str, active: Any
+) -> None:
+    provider, client, _ = setup
+    client.search_users.return_value = [
+        {
+            "ID": 7,
+            "NAME": "Алексей",
+            "LAST_NAME": "Пелин",
+            "SECOND_NAME": "Валерьевич",
+            "USER_TYPE": "employee",
+            "ACTIVE": active,
+        }
+    ]
+    assert provider._resolve_manager(name) == CrmEmployee(name, 7)
+
+
+def test_manager_short_name_ambiguous_patronymics(setup: Tuple[CrmProvider, Mock, Mock]) -> None:
+    provider, client, _ = setup
+    client.search_users.return_value = [
+        {
+            "ID": 7,
+            "NAME": "Алексей",
+            "LAST_NAME": "Пелин",
+            "SECOND_NAME": "Валерьевич",
+            "USER_TYPE": "employee",
+        },
+        {
+            "ID": 8,
+            "NAME": "Алексей",
+            "LAST_NAME": "Пелин",
+            "SECOND_NAME": "Иванович",
+            "USER_TYPE": "employee",
+        },
+    ]
+    with pytest.raises(CrmAmbiguousSemanticError):
+        provider._resolve_manager("Алексей Пелин")
+
+
+@pytest.mark.parametrize("name", ["Алексей", "Алекс Пелин", "Алексей Пел", "Алексей Другой"])
+def test_manager_requires_exact_name_and_surname(
+    setup: Tuple[CrmProvider, Mock, Mock], name: str
+) -> None:
+    provider, client, _ = setup
+    client.search_users.return_value = [
+        {"ID": 7, "NAME": "Алексей", "LAST_NAME": "Пелин", "SECOND_NAME": "Валерьевич"}
+    ]
+    with pytest.raises(CrmMissingSemanticError):
+        provider._resolve_manager(name)

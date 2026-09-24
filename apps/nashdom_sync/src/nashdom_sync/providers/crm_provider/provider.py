@@ -58,9 +58,7 @@ class CrmProvider:
             managers = self._build_managers(region_settings)
             return CrmContext(structure, references, existing, managers)
         except BitrixGatewayError as exc:
-            raise CrmProviderError(
-                "CRM: недоступен Gateway или нарушен контракт ответа"
-            ) from exc
+            raise CrmProviderError("CRM: недоступен Gateway или нарушен контракт ответа") from exc
         except BitrixClientError as exc:
             raise CrmProviderError("CRM: не удалось прочитать обязательные данные") from exc
         finally:
@@ -208,7 +206,9 @@ class CrmProvider:
     def _build_existing(self, structure: CrmStructure) -> ExistingCrmEntities:
         types, fields = structure.entity_types, structure.entity_fields
         return ExistingCrmEntities(
-            leads=self._load_existing_entities(types.lead, fields.lead.source_building_id),
+            leads=self._load_existing_entities(
+                types.lead, fields.lead.source_building_id, allow_duplicates=True
+            ),
             developers=self._load_existing_entities(
                 types.company, fields.developer.source_developer_id
             ),
@@ -218,7 +218,7 @@ class CrmProvider:
         )
 
     def _load_existing_entities(
-        self, entity_type_id: int, source_id_field: str
+        self, entity_type_id: int, source_id_field: str, *, allow_duplicates: bool = False
     ) -> Tuple[ExistingCrmEntity, ...]:
         records = self._client.list_items(entity_type_id, select=["id", source_id_field])
         result: List[ExistingCrmEntity] = []
@@ -226,12 +226,24 @@ class CrmProvider:
         for index, record in enumerate(records):
             context = f"entityTypeId={entity_type_id}, запись {index}"
             crm_id = self._id(record.get("id"), f"{context}, id")
+            context += f", crm_id={crm_id}"
+            if source_id_field not in record:
+                raise CrmInvalidDataError(f"CRM {context}: отсутствует поле {source_id_field}")
+            raw_source_id = record[source_id_field]
+            # В CRM есть записи без связи с источником; в индекс соответствий они не входят.
+            if raw_source_id is None or (
+                isinstance(raw_source_id, str) and not raw_source_id.strip()
+            ):
+                continue
             source_id = self._id(
-                record.get(source_id_field),
+                raw_source_id,
                 f"{context}, {source_id_field}",
                 source=True,
             )
             if source_id in seen:
+                if allow_duplicates:
+                    # Для лидов нужен факт существования; сохраняем первую запись ответа CRM.
+                    continue
                 raise CrmInvalidDataError(
                     f"CRM entityTypeId={entity_type_id}: повтор source_id={source_id}, "
                     f"crm_id={seen[source_id]} и {crm_id}"
@@ -257,12 +269,6 @@ class CrmProvider:
     def _resolve_manager(self, name: str) -> CrmEmployee:
         matches: List[Dict[str, Any]] = []
         for candidate in self._client.search_users(name):
-            if "ACTIVE" in candidate:
-                active: Any = candidate["ACTIVE"]
-                if active is False or active in ("N", "0", 0):
-                    continue
-                if not (active is True or active in ("Y", "1", 1)):
-                    raise CrmInvalidDataError("CRM user.search: некорректный ACTIVE")
             if "USER_TYPE" in candidate and candidate["USER_TYPE"] != "employee":
                 continue
             parts: List[str] = []
@@ -273,10 +279,24 @@ class CrmProvider:
                 if not isinstance(part, str):
                     raise CrmInvalidDataError(f"CRM user.search: некорректный {field}")
                 parts.append(part)
-            if self._normalize_name(" ".join(parts)) == self._normalize_name(name):
+            last_name, first_name, second_name = parts
+            if not first_name.strip() or not last_name.strip():
+                continue
+            # Только точные варианты имени: отчество можно опустить, порядок — поменять.
+            variants = (
+                f"{first_name} {last_name}",
+                f"{last_name} {first_name}",
+                f"{last_name} {first_name} {second_name}",
+                f"{first_name} {second_name} {last_name}",
+            )
+            if self._normalize_name(name) in {
+                self._normalize_name(variant) for variant in variants
+            }:
                 matches.append(candidate)
         if not matches:
-            raise CrmMissingSemanticError(f'CRM manager "{name}": точное ФИО не найдено')
+            raise CrmMissingSemanticError(
+                f'CRM manager "{name}": совпадение имени и фамилии не найдено'
+            )
         if len(matches) != 1:
-            raise CrmAmbiguousSemanticError(f'CRM manager "{name}": неоднозначное ФИО')
+            raise CrmAmbiguousSemanticError(f'CRM manager "{name}": неоднозначное имя и фамилия')
         return CrmEmployee(name, self._id(matches[0].get("ID"), "user.search ID"))
