@@ -58,7 +58,7 @@ class CrmProvider:
             managers = self._build_managers(region_settings)
             return CrmContext(structure, references, existing, managers)
         except BitrixGatewayError as exc:
-            raise CrmInvalidDataError(
+            raise CrmProviderError(
                 "CRM: недоступен Gateway или нарушен контракт ответа"
             ) from exc
         except BitrixClientError as exc:

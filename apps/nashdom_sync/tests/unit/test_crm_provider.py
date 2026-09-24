@@ -403,13 +403,28 @@ def test_provide_failure_closes_client(setup: Tuple[CrmProvider, Mock, Mock], me
 
 
 @pytest.mark.parametrize("error", [BitrixGatewayError, BitrixRequestFailedError])
+@pytest.mark.parametrize(
+    "method",
+    [
+        "list_owner_types",
+        "get_item_fields",
+        "list_statuses",
+        "list_items",
+        "search_users",
+    ],
+)
 def test_client_failure_is_domain_error(
-    setup: Tuple[CrmProvider, Mock, Mock], error: Type[Exception]
+    setup: Tuple[CrmProvider, Mock, Mock], error: Type[Exception], method: str
 ) -> None:
     provider, client, _ = setup
-    client.list_owner_types.side_effect = error("transport error")
-    with pytest.raises(CrmProviderError):
+    cause = error("transport error")
+    getattr(client, method).side_effect = cause
+    with pytest.raises(CrmProviderError) as caught:
         provider.provide(region())
+    assert not isinstance(caught.value, CrmInvalidDataError)
+    assert caught.value.__cause__ is cause
+    if error is BitrixGatewayError:
+        assert str(caught.value) == "CRM: недоступен Gateway или нарушен контракт ответа"
     client.close.assert_called_once_with()
 
 
