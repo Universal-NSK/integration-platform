@@ -1,5 +1,9 @@
+import logging
 import re
+from time import perf_counter
 from typing import Any, Dict, List, Optional, cast
+
+from platform_logging import log_event
 
 from ._contracts import GatewayExecutionStatus, RetryPolicy
 from ._gateway import GatewayHttpClient
@@ -8,6 +12,14 @@ from .exceptions import (
     BitrixRequestFailedError,
     BitrixRequestUnknownError,
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_error_code(code: Optional[str]) -> Optional[str]:
+    if code is not None and re.fullmatch(r"[A-Z][A-Z0-9_]{0,79}", code) is None:
+        return "[скрыто]"
+    return code
 
 
 class ClientBitrixCRM:
@@ -24,15 +36,53 @@ class ClientBitrixCRM:
     def _call(
         self, method: str, payload: Dict[str, Any], retry_policy: RetryPolicy
     ) -> Dict[str, Any]:
-        result = self._gateway.call(method, payload, retry_policy)
+        started_at = perf_counter()
+        context: Dict[str, Any] = {"method": method, "retry_policy": retry_policy.value}
+        for source, target in (("entityTypeId", "entity_type_id"), ("start", "start")):
+            if source in payload:
+                context[target] = payload[source]
+        log_event(logger, logging.DEBUG, "bitrix_call_started", **context)
+        try:
+            result = self._gateway.call(method, payload, retry_policy)
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.DEBUG,
+                "bitrix_call_failed",
+                **context,
+                exception_type=type(exc).__name__,
+                duration_seconds=perf_counter() - started_at,
+            )
+            raise
+
         if result.status is GatewayExecutionStatus.SUCCESS:
-            return self._object(result.data, method)
+            data = self._object(result.data, method)
+            log_event(
+                logger,
+                logging.DEBUG,
+                "bitrix_call_completed",
+                **context,
+                gateway_status=result.status.value,
+                http_status=result.http_status,
+                attempt_count=result.attempt_count,
+                duration_seconds=perf_counter() - started_at,
+            )
+            return data
 
         # Произвольное сообщение сервера может содержать webhook, token или payload.
         # Не переносим его в исключение даже при отключённом логировании клиента.
-        code = result.error_code
-        if code is not None and re.fullmatch(r"[A-Z][A-Z0-9_]{0,79}", code) is None:
-            code = "[скрыто]"
+        code = _safe_error_code(result.error_code)
+        log_event(
+            logger,
+            logging.DEBUG,
+            "bitrix_call_unsuccessful",
+            **context,
+            gateway_status=result.status.value,
+            http_status=result.http_status,
+            error_code=code,
+            attempt_count=result.attempt_count,
+            duration_seconds=perf_counter() - started_at,
+        )
         diagnostic = (
             "{}: status={}, http_status={}, error_code={}, error_message=[скрыто], attempt_count={}"
         ).format(method, result.status.value, result.http_status, code, result.attempt_count)
@@ -58,22 +108,53 @@ class ClientBitrixCRM:
     def _call_all_pages(
         self, method: str, payload: Dict[str, Any], *, items: bool = False
     ) -> List[Dict[str, Any]]:
+        started_at = perf_counter()
         records: List[Dict[str, Any]] = []
-        page_payload = dict(payload)
+        pages = 0
         start = 0
-        while True:
-            data = self._call(method, page_payload, RetryPolicy.SAFE)
-            result: Any = data.get("result")
-            if items:
-                result = self._object(result, method).get("items")
-            records.extend(self._records(result, method))
-            if "next" not in data:
-                return records
-            next_start: Any = data["next"]
-            if type(next_start) is not int or next_start <= start:
-                raise BitrixGatewayError("{}: некорректный next в ответе".format(method))
-            start = next_start
-            page_payload = dict(payload, start=start)
+        context: Dict[str, Any] = {"method": method}
+        if "entityTypeId" in payload:
+            context["entity_type_id"] = payload["entityTypeId"]
+        page_payload = dict(payload)
+        try:
+            while True:
+                data = self._call(method, page_payload, RetryPolicy.SAFE)
+                result: Any = data.get("result")
+                if items:
+                    result = self._object(result, method).get("items")
+                records.extend(self._records(result, method))
+                if "next" not in data:
+                    pages += 1
+                    break
+                next_start: Any = data["next"]
+                if type(next_start) is not int or next_start <= start:
+                    raise BitrixGatewayError("{}: некорректный next в ответе".format(method))
+                pages += 1
+                start = next_start
+                page_payload = dict(payload, start=start)
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.DEBUG,
+                "bitrix_pagination_failed",
+                **context,
+                pages_completed=pages,
+                records_received=len(records),
+                next_start=page_payload.get("start", 0),
+                duration_seconds=perf_counter() - started_at,
+                exception_type=type(exc).__name__,
+            )
+            raise
+        log_event(
+            logger,
+            logging.DEBUG,
+            "bitrix_pagination_completed",
+            **context,
+            pages=pages,
+            records=len(records),
+            duration_seconds=perf_counter() - started_at,
+        )
+        return records
 
     def profile(self) -> Dict[str, Any]:
         """Получить профиль пользователя Gateway."""

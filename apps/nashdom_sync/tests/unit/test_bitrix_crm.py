@@ -1,3 +1,4 @@
+import logging
 from dataclasses import FrozenInstanceError
 from typing import Any, Callable, Dict, Iterator, List, Tuple, Type
 from unittest.mock import Mock
@@ -14,8 +15,15 @@ from nashdom_sync.bitrix_crm._contracts import (
     GatewayExecutionStatus,
     RetryPolicy,
 )
+from platform_logging.formatter import DETAILS_ATTRIBUTE, EVENT_ATTRIBUTE
 
 Operation = Callable[[ClientBitrixCRM], Any]
+
+
+def crm_events(caplog: pytest.LogCaptureFixture) -> List[Tuple[str, Dict[str, Any]]]:
+    records = [r for r in caplog.records if r.name == "nashdom_sync.bitrix_crm.client"]
+    assert all(r.levelno == logging.DEBUG and r.exc_info is None for r in records)
+    return [(getattr(r, EVENT_ATTRIBUTE), getattr(r, DETAILS_ATTRIBUTE)) for r in records]
 
 
 def success(data: Dict[str, Any]) -> GatewayCallResult:
@@ -288,6 +296,231 @@ def test_result_is_frozen() -> None:
     result = success({"result": True})
     with pytest.raises(FrozenInstanceError):
         result.attempt_count = 2  # pyright: ignore[reportAttributeAccessIssue]
+
+
+def test_single_call_debug_events(
+    crm: Tuple[ClientBitrixCRM, Mock],
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, gateway = crm
+    caplog.set_level(logging.DEBUG)
+    monkeypatch.setattr(
+        "nashdom_sync.bitrix_crm.client.perf_counter", Mock(side_effect=[10, 10.25])
+    )
+    gateway.call.return_value = success({"result": {"fields": {"private": "secret"}}})
+    assert client.get_item_fields(4) == {"private": "secret"}
+    context = {"method": "crm.item.fields", "retry_policy": "safe", "entity_type_id": 4}
+    assert crm_events(caplog) == [
+        ("bitrix_call_started", context),
+        (
+            "bitrix_call_completed",
+            dict(
+                context,
+                gateway_status="success",
+                http_status=200,
+                attempt_count=1,
+                duration_seconds=0.25,
+            ),
+        ),
+    ]
+    assert "secret" not in repr([r.__dict__ for r in caplog.records])
+
+
+@pytest.mark.parametrize(
+    "status,error",
+    [
+        (GatewayExecutionStatus.FAILED, BitrixRequestFailedError),
+        (GatewayExecutionStatus.UNKNOWN, BitrixRequestUnknownError),
+    ],
+)
+@pytest.mark.parametrize(
+    "code,safe_code",
+    [
+        ("ACCESS_DENIED", "ACCESS_DENIED"),
+        (None, None),
+        ("A" + "_" * 79, "A" + "_" * 79),
+        ("A" * 81, "[скрыто]"),
+        ("", "[скрыто]"),
+        ("private https://secret.invalid/token", "[скрыто]"),
+        ("ERROR\n", "[скрыто]"),
+        ("lowercase", "[скрыто]"),
+    ],
+)
+def test_unsuccessful_debug_events(
+    crm: Tuple[ClientBitrixCRM, Mock],
+    caplog: pytest.LogCaptureFixture,
+    status: GatewayExecutionStatus,
+    error: Type[Exception],
+    code: Any,
+    safe_code: Any,
+) -> None:
+    client, gateway = crm
+    caplog.set_level(logging.DEBUG)
+    gateway.call.return_value = GatewayCallResult(
+        status,
+        None,
+        503,
+        code,
+        "private server message",
+        3,
+    )
+    with pytest.raises(error) as exc:
+        client.get_item_fields(4)
+    events = crm_events(caplog)
+    assert [name for name, _ in events] == ["bitrix_call_started", "bitrix_call_unsuccessful"]
+    details = events[-1][1]
+    assert details.pop("duration_seconds") >= 0
+    assert details == {
+        "method": "crm.item.fields",
+        "retry_policy": "safe",
+        "entity_type_id": 4,
+        "gateway_status": status.value,
+        "http_status": 503,
+        "attempt_count": 3,
+        "error_code": safe_code,
+    }
+    assert "error_code={}".format(safe_code) in str(exc.value)
+    assert "private" not in str(exc.value)
+    assert "private" not in repr([r.__dict__ for r in caplog.records])
+
+
+def test_gateway_failure_is_reraised_and_logged(
+    crm: Tuple[ClientBitrixCRM, Mock],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client, gateway = crm
+    caplog.set_level(logging.DEBUG)
+    error = BitrixGatewayError("private gateway URL")
+    cause = ValueError("private cause")
+    error.__cause__ = cause
+    gateway.call.side_effect = error
+    with pytest.raises(BitrixGatewayError) as exc:
+        client.get_item_fields(4)
+    assert exc.value is error and exc.value.__cause__ is cause
+    events = crm_events(caplog)
+    assert [name for name, _ in events] == ["bitrix_call_started", "bitrix_call_failed"]
+    details = events[-1][1]
+    assert details.pop("duration_seconds") >= 0
+    assert details == {
+        "method": "crm.item.fields",
+        "retry_policy": "safe",
+        "entity_type_id": 4,
+        "exception_type": "BitrixGatewayError",
+    }
+    assert "private" not in repr([r.__dict__ for r in caplog.records])
+
+
+def test_pagination_debug_events_and_payload_allowlist(
+    crm: Tuple[ClientBitrixCRM, Mock],
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, gateway = crm
+    caplog.set_level(logging.DEBUG)
+    monkeypatch.setattr(
+        "nashdom_sync.bitrix_crm.client.perf_counter",
+        Mock(side_effect=[0, 1, 2, 3, 4, 5]),
+    )
+    gateway.call.side_effect = [
+        success({"result": {"items": [{"private": 1}, {"private": 2}]}, "next": 50}),
+        success({"result": {"items": [{"private": 3}]}}),
+    ]
+    assert len(client.list_items(4, filter_={"private": "secret"}, select=["private"])) == 3
+    events = crm_events(caplog)
+    assert [name for name, _ in events] == [
+        "bitrix_call_started",
+        "bitrix_call_completed",
+        "bitrix_call_started",
+        "bitrix_call_completed",
+        "bitrix_pagination_completed",
+    ]
+    for _, details in events[:4]:
+        assert details["entity_type_id"] == 4
+        assert details["retry_policy"] == "safe"
+    assert "start" not in events[0][1] and "start" not in events[1][1]
+    assert events[2][1]["start"] == events[3][1]["start"] == 50
+    assert events[-1][1] == {
+        "method": "crm.item.list",
+        "entity_type_id": 4,
+        "pages": 2,
+        "records": 3,
+        "duration_seconds": 5,
+    }
+    assert "private" not in repr([r.__dict__ for r in caplog.records])
+    assert "secret" not in repr([r.__dict__ for r in caplog.records])
+
+
+@pytest.mark.parametrize("error", [BitrixGatewayError("private"), ValueError("private")])
+@pytest.mark.parametrize("first_page", [False, True])
+def test_pagination_failure_progress_and_identity(
+    crm: Tuple[ClientBitrixCRM, Mock],
+    caplog: pytest.LogCaptureFixture,
+    error: Exception,
+    first_page: bool,
+) -> None:
+    client, gateway = crm
+    caplog.set_level(logging.DEBUG)
+    gateway.call.side_effect = (
+        [
+            success({"result": {"items": [{"id": 1}]}, "next": 50}),
+        ]
+        if first_page
+        else []
+    ) + [error]
+    with pytest.raises(type(error)) as exc:
+        client.list_items(4, filter_={"private": "secret"})
+    assert exc.value is error
+    events = crm_events(caplog)
+    assert [name for name, _ in events[-3:]] == [
+        "bitrix_call_started",
+        "bitrix_call_failed",
+        "bitrix_pagination_failed",
+    ]
+    details = events[-1][1]
+    assert details.pop("duration_seconds") >= 0
+    assert details == {
+        "method": "crm.item.list",
+        "entity_type_id": 4,
+        "pages_completed": int(first_page),
+        "records_received": int(first_page),
+        "next_start": 50 if first_page else 0,
+        "exception_type": type(error).__name__,
+    }
+    assert "private" not in repr([r.__dict__ for r in caplog.records])
+
+
+@pytest.mark.parametrize(
+    "page,records_received",
+    [
+        ({"result": [{"id": 2}], "next": "private"}, 2),
+        ({"result": [{"id": 2}], "next": 50}, 2),
+        ({"result": "private"}, 1),
+    ],
+)
+def test_pagination_contract_failure_debug_event(
+    crm: Tuple[ClientBitrixCRM, Mock],
+    caplog: pytest.LogCaptureFixture,
+    page: Dict[str, Any],
+    records_received: int,
+) -> None:
+    client, gateway = crm
+    caplog.set_level(logging.DEBUG)
+    gateway.call.side_effect = [success({"result": [{"id": 1}], "next": 50}), success(page)]
+    with pytest.raises(BitrixGatewayError):
+        client.list_users()
+    events = crm_events(caplog)
+    assert events[-1][0] == "bitrix_pagination_failed"
+    details = events[-1][1]
+    assert details.pop("duration_seconds") >= 0
+    assert details == {
+        "method": "user.get",
+        "pages_completed": 1,
+        "records_received": records_received,
+        "next_start": 50,
+        "exception_type": "BitrixGatewayError",
+    }
+    assert "private" not in repr([r.__dict__ for r in caplog.records])
 
 
 def test_search_users_pagination(crm: Tuple[ClientBitrixCRM, Mock]) -> None:
