@@ -10,7 +10,12 @@ from nashdom_sync.bitrix_crm.exceptions import (
     BitrixGatewayError,
     BitrixRequestFailedError,
 )
-from nashdom_sync.contracts.crm import CrmEmployee, ExistingCrmEntity
+from nashdom_sync.contracts.crm import (
+    CrmEmployee,
+    ExistingCrmCompanyGroup,
+    ExistingCrmDeveloper,
+    ExistingCrmLead,
+)
 from nashdom_sync.contracts.settings import BitrixClientSettings, RegionSettings
 from nashdom_sync.providers.crm_provider import (
     CrmAmbiguousSemanticError,
@@ -56,7 +61,7 @@ def setup(monkeypatch: pytest.MonkeyPatch) -> Tuple[CrmProvider, Mock, Mock]:
         }[entity]
 
     def items(entity: int, select: List[str]) -> List[Dict[str, Any]]:
-        return [{"id": entity + 10, select[1]: "42.00"}]
+        return [{"id": 14}] if entity == 4 else [{"id": entity + 10, select[1]: "42.00"}]
 
     client.get_item_fields.side_effect = get_fields
     client.list_statuses.side_effect = statuses
@@ -66,6 +71,9 @@ def setup(monkeypatch: pytest.MonkeyPatch) -> Tuple[CrmProvider, Mock, Mock]:
         {"NAME": "Юридический адрес", "ID": 6},
     ]
     client.list_items.side_effect = items
+    client.list_requisites.return_value = [
+        {"ID": "20", "ENTITY_TYPE_ID": "4", "ENTITY_ID": "14", "RQ_INN": "00123"}
+    ]
     client.search_users.return_value = [
         {
             "ID": "7",
@@ -233,12 +241,21 @@ def test_bindings_and_defaults(setup: Tuple[CrmProvider, Mock, Mock]) -> None:
 
 
 @pytest.mark.parametrize("source", [42, "42", 42.0, "42.00"])
-def test_existing_normalization(setup: Tuple[CrmProvider, Mock, Mock], source: Any) -> None:
+@pytest.mark.parametrize("kind", ["leads", "company_groups"])
+def test_existing_normalization(
+    setup: Tuple[CrmProvider, Mock, Mock], source: Any, kind: str
+) -> None:
     provider, client, _ = setup
     client.list_items.side_effect = None
     client.list_items.return_value = [{"id": "7", "external": source}]
-    assert provider._load_existing_entities(4, "external") == (ExistingCrmEntity(42, 7),)
-    client.list_items.assert_called_once_with(4, select=["id", "external"])
+    if kind == "leads":
+        assert provider._load_existing_leads(1, "external") == (ExistingCrmLead(42, 7),)
+        client.list_items.assert_called_once_with(1, select=["id", "external"])
+    else:
+        assert provider._load_existing_company_groups(1050, "external") == (
+            ExistingCrmCompanyGroup(42, 7),
+        )
+        client.list_items.assert_called_once_with(1050, select=["id", "external"])
 
 
 @pytest.mark.parametrize(
@@ -269,15 +286,19 @@ def test_existing_normalization(setup: Tuple[CrmProvider, Mock, Mock], source: A
         ],
     ],
 )
-def test_existing_invalid(setup: Tuple[CrmProvider, Mock, Mock], records: Any) -> None:
+@pytest.mark.parametrize("kind", ["leads", "company_groups"])
+def test_existing_invalid(setup: Tuple[CrmProvider, Mock, Mock], records: Any, kind: str) -> None:
     provider, client, _ = setup
     client.list_items.side_effect = None
     client.list_items.return_value = records
     with pytest.raises(CrmInvalidDataError):
-        provider._load_existing_entities(1, "s")
+        if kind == "leads":
+            provider._load_existing_leads(1, "s")
+        else:
+            provider._load_existing_company_groups(1050, "s")
 
 
-@pytest.mark.parametrize("entity_type_id", [1, 4, 1050])
+@pytest.mark.parametrize("entity_type_id", [1, 1050])
 def test_existing_skips_unlinked_records(
     setup: Tuple[CrmProvider, Mock, Mock], entity_type_id: int
 ) -> None:
@@ -289,9 +310,15 @@ def test_existing_skips_unlinked_records(
         {"id": 5, "s": " \t\n "},
         {"id": 6, "s": "42.00"},
     ]
-    assert provider._load_existing_entities(entity_type_id, "s") == (ExistingCrmEntity(42, 6),)
+    loader = (
+        provider._load_existing_leads
+        if entity_type_id == 1
+        else provider._load_existing_company_groups
+    )
+    dto = ExistingCrmLead if entity_type_id == 1 else ExistingCrmCompanyGroup
+    assert loader(entity_type_id, "s") == (dto(42, 6),)
     client.list_items.return_value = [{"id": 2, "s": None}]
-    assert provider._load_existing_entities(entity_type_id, "s") == ()
+    assert loader(entity_type_id, "s") == ()
 
 
 def test_managers_deduplicate_and_normalize(
@@ -388,13 +415,13 @@ def test_provide_complete_and_repeatable(setup: Tuple[CrmProvider, Mock, Mock]) 
         "email_type_id": "EMAIL",
         "web_type_id": "WEB",
     }
-    assert result.existing.leads == (ExistingCrmEntity(42, 11),)
-    assert result.existing.developers == (ExistingCrmEntity(42, 14),)
-    assert result.existing.company_groups == (ExistingCrmEntity(42, 1060),)
+    assert result.existing.leads == (ExistingCrmLead(42, 11),)
+    assert result.existing.developers == (ExistingCrmDeveloper("00123", 14),)
+    assert result.existing.company_groups == (ExistingCrmCompanyGroup(42, 1060),)
     assert result.managers == (CrmEmployee("Иванов Иван Иванович", 7),)
     assert client.list_items.call_args_list == [
         call(1, select=["id", "resolved_source_building_id"]),
-        call(4, select=["id", "resolved_source_developer_id"]),
+        call(4, select=["id"]),
         call(1050, select=["id", "resolved_source_company_group_id"]),
     ]
     with pytest.raises(FrozenInstanceError):
@@ -411,6 +438,7 @@ def test_provide_complete_and_repeatable(setup: Tuple[CrmProvider, Mock, Mock]) 
         "get_item_fields",
         "list_statuses",
         "list_items",
+        "list_requisites",
         "search_users",
     ],
 )
@@ -430,6 +458,7 @@ def test_provide_failure_closes_client(setup: Tuple[CrmProvider, Mock, Mock], me
         "get_item_fields",
         "list_statuses",
         "list_items",
+        "list_requisites",
         "search_users",
     ],
 )
@@ -506,7 +535,7 @@ def test_semantic_invalid_ids(
             provider._build_references()
 
 
-@pytest.mark.parametrize("kind", ["leads", "developers", "company_groups"])
+@pytest.mark.parametrize("kind", ["leads", "company_groups"])
 @pytest.mark.parametrize("second_crm_id", [8, 3])
 def test_existing_duplicate_policy(
     setup: Tuple[CrmProvider, Mock, Mock], kind: str, second_crm_id: int
@@ -530,7 +559,7 @@ def test_existing_duplicate_policy(
 
     client.list_items.side_effect = items
     if kind == "leads":
-        expected = (ExistingCrmEntity(42, 8), ExistingCrmEntity(43, 9))
+        expected = (ExistingCrmLead(42, 8), ExistingCrmLead(43, 9))
         assert provider._build_existing(structure).leads == expected
         assert provider._build_existing(structure).leads == expected
     else:
@@ -682,6 +711,7 @@ def test_provider_success_events(
         ("list_items", 1, "existing.leads"),
         ("list_items", 2, "existing.developers"),
         ("list_items", 3, "existing.company_groups"),
+        ("list_requisites", 1, "existing.requisites"),
         ("search_users", 1, "managers.Иванов Иван Иванович"),
     ],
 )
@@ -750,6 +780,8 @@ def test_provider_partial_stats_and_reset(
     provider, client, _ = setup
 
     def items(entity: int, select: List[str]) -> List[Dict[str, Any]]:
+        if entity == 4:
+            return [{"id": 14}, {"id": 15}]
         return [
             {"id": 1, select[1]: None},
             {"id": 2, select[1]: "  "},
@@ -762,16 +794,16 @@ def test_provider_partial_stats_and_reset(
     with caplog.at_level(logging.INFO), pytest.raises(CrmInvalidDataError):
         provider.provide(region())
     failure = provider_events(caplog)["crm_provider_failed"]
-    assert event_field(failure, "stage") == "existing.developers"
+    assert event_field(failure, "stage") == "existing.company_groups"
     for key, value in {
         "leads_received": 5,
         "leads_indexed": 1,
         "leads_skipped_empty": 2,
         "lead_duplicate_source_ids": 2,
-        "developers_received": 5,
+        "developers_received": 2,
         "developers_indexed": 1,
-        "developers_skipped_empty": 2,
-        "company_groups_received": 0,
+        "developers_skipped_empty": 1,
+        "company_groups_received": 5,
         "managers_resolved": 0,
     }.items():
         assert event_field(failure, key) == value
@@ -798,6 +830,8 @@ def test_provider_logs_exclude_sensitive_data(
     client.search_users.return_value[0].update({"EMAIL": secret, "PHONE": secret})
 
     def items(entity: int, select: List[str]) -> List[Dict[str, Any]]:
+        if entity == 4:
+            return [{"id": 14}, {"id": 15}]
         return [
             {
                 "id": 1,
@@ -892,6 +926,8 @@ def test_successful_existing_stats_and_partial_managers(
     provider, client, _ = setup
 
     def items(entity: int, select: List[str]) -> List[Dict[str, Any]]:
+        if entity == 4:
+            return [{"id": 14}, {"id": 15}]
         records = [{"id": 1, select[1]: None}, {"id": 2, select[1]: 42}]
         if entity == 1:
             records.append({"id": 3, select[1]: 42})
@@ -914,3 +950,150 @@ def test_successful_existing_stats_and_partial_managers(
     assert event_field(failure, "managers_resolved") == 1
     assert event_field(failure, "stage") == "managers.Петров Петр"
     client.close.assert_called_once_with()
+
+
+@pytest.mark.parametrize(
+    "requisites,expected",
+    [
+        ([], ()),
+        ([{"ID": 1, "ENTITY_ID": 14, "RQ_INN": None}], ()),
+        ([{"ID": 1, "ENTITY_ID": 14, "RQ_INN": ""}], ()),
+        ([{"ID": 1, "ENTITY_ID": 14, "RQ_INN": " \t "}], ()),
+        ([{"ID": 1, "ENTITY_ID": 14}], ()),
+        (
+            [{"ID": "1", "ENTITY_ID": "14", "RQ_INN": " 00123 "}],
+            (ExistingCrmDeveloper("00123", 14),),
+        ),
+        (
+            [
+                {"ID": 1, "ENTITY_ID": 14, "RQ_INN": "00123"},
+                {"ID": 2, "ENTITY_ID": 14, "RQ_INN": " 00123 "},
+            ],
+            (ExistingCrmDeveloper("00123", 14),),
+        ),
+        (
+            [
+                {"ID": 1, "ENTITY_ID": 14, "RQ_INN": "00123"},
+                {"ID": 2, "ENTITY_ID": 14, "RQ_INN": "00456"},
+            ],
+            (ExistingCrmDeveloper("00123", 14), ExistingCrmDeveloper("00456", 14)),
+        ),
+        (
+            [
+                {"ID": 1, "ENTITY_ID": 99, "RQ_INN": "00123"},
+                {"ID": 2, "ENTITY_ID": 14, "RQ_INN": "00123"},
+            ],
+            (ExistingCrmDeveloper("00123", 14),),
+        ),
+        ([{"ID": 1, "ENTITY_ID": 99, "RQ_INN": "00123"}], ()),
+        ([{"ID": 1, "ENTITY_ID": 14, "ENTITY_TYPE_ID": 3, "RQ_INN": "00123"}], ()),
+    ],
+)
+def test_developer_requisite_identity(
+    setup: Tuple[CrmProvider, Mock, Mock],
+    requisites: List[Dict[str, Any]],
+    expected: Tuple[ExistingCrmDeveloper, ...],
+) -> None:
+    provider, client, _ = setup
+    client.list_requisites.return_value = requisites
+    assert provider._load_existing_developers(4) == expected
+    client.list_items.assert_called_once_with(4, select=["id"])
+    client.list_requisites.assert_called_once_with(filter_={"ENTITY_TYPE_ID": 4})
+
+
+@pytest.mark.parametrize("field", ["ID", "ENTITY_ID", "ENTITY_TYPE_ID"])
+@pytest.mark.parametrize("value", [None, True, False, 0, -1, 1.5, 14.0, "14.0", " 14", "bad"])
+def test_requisite_strict_ids(
+    setup: Tuple[CrmProvider, Mock, Mock], field: str, value: Any
+) -> None:
+    provider, client, _ = setup
+    record = {"ID": 1, "ENTITY_ID": 14, "ENTITY_TYPE_ID": 4, "RQ_INN": "00123"}
+    record[field] = value
+    client.list_requisites.return_value = [record]
+    with pytest.raises(CrmInvalidDataError):
+        provider._load_existing_developers(4)
+
+
+@pytest.mark.parametrize("value", [True, 0, 123, 123.0, [], {}])
+def test_requisite_inn_requires_string(setup: Tuple[CrmProvider, Mock, Mock], value: Any) -> None:
+    provider, client, _ = setup
+    client.list_requisites.return_value = [{"ID": 1, "ENTITY_ID": 14, "RQ_INN": value}]
+    with pytest.raises(CrmInvalidDataError, match="RQ_INN"):
+        provider._load_existing_developers(4)
+
+
+@pytest.mark.parametrize("value", [None, True, 0, 14.0, "14.0", "bad"])
+def test_company_strict_id(setup: Tuple[CrmProvider, Mock, Mock], value: Any) -> None:
+    provider, client, _ = setup
+    client.list_items.side_effect = None
+    client.list_items.return_value = [{"id": value}]
+    with pytest.raises(CrmInvalidDataError):
+        provider._load_existing_developers(4)
+
+
+def test_duplicate_inn_across_companies_fails_without_pii(
+    setup: Tuple[CrmProvider, Mock, Mock], caplog: pytest.LogCaptureFixture
+) -> None:
+    provider, client, _ = setup
+    original = client.list_items.side_effect
+
+    def items(entity: int, select: List[str]) -> List[Dict[str, Any]]:
+        return [{"id": 14}, {"id": 15}] if entity == 4 else original(entity, select)
+
+    client.list_items.side_effect = items
+    client.list_requisites.return_value = [
+        {"ID": 1, "ENTITY_ID": 14, "RQ_INN": "0012345678", "payload": "PRIVATE_PAYLOAD"},
+        {"ID": 2, "ENTITY_ID": 15, "RQ_INN": "0012345678"},
+    ]
+    with caplog.at_level(logging.DEBUG), pytest.raises(CrmInvalidDataError):
+        provider.provide(region())
+    records = str([record.__dict__ for record in caplog.records])
+    assert "0012345678" not in records
+    assert "PRIVATE_PAYLOAD" not in records
+    failure = provider_events(caplog)["crm_provider_failed"]
+    assert event_field(failure, "stage") == "existing.developers"
+    assert event_field(failure, "developers_indexed") == 1
+    client.close.assert_called_once_with()
+
+
+def test_requisites_are_local_to_provide_and_counts_use_inn(
+    setup: Tuple[CrmProvider, Mock, Mock], caplog: pytest.LogCaptureFixture
+) -> None:
+    provider, client, _ = setup
+    client.list_requisites.return_value = [
+        {"ID": 1, "ENTITY_ID": 14, "RQ_INN": "00123"},
+        {"ID": 2, "ENTITY_ID": 14, "RQ_INN": "00123"},
+        {"ID": 3, "ENTITY_ID": 14, "RQ_INN": "00456"},
+    ]
+    with caplog.at_level(logging.INFO):
+        first = provider.provide(region())
+    assert len(first.existing.developers) == 2
+    completed = provider_events(caplog)["crm_provider_completed"]
+    assert event_field(completed, "developers_received") == 1
+    assert event_field(completed, "developers_indexed") == 2
+    assert event_field(completed, "developers_skipped_empty") == 0
+    client.list_requisites.return_value = []
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        second = provider.provide(region())
+    assert second.existing.developers == ()
+    assert len(first.existing.developers) == 2
+    completed = provider_events(caplog)["crm_provider_completed"]
+    assert event_field(completed, "developers_indexed") == 0
+    assert event_field(completed, "developers_skipped_empty") == 1
+    assert client.close.call_count == 2
+
+
+def test_existing_contract_types_and_serialization(setup: Tuple[CrmProvider, Mock, Mock]) -> None:
+    existing = setup[0].provide(region()).existing
+    assert type(existing.leads[0]) is ExistingCrmLead
+    assert type(existing.developers[0]) is ExistingCrmDeveloper
+    assert type(existing.company_groups[0]) is ExistingCrmCompanyGroup
+    assert asdict(existing) == {
+        "leads": ({"source_id": 42, "crm_id": 11},),
+        "developers": ({"inn": "00123", "crm_id": 14},),
+        "company_groups": ({"source_id": 42, "crm_id": 1060},),
+    }
+    for dto in (existing.leads[0], existing.developers[0], existing.company_groups[0]):
+        with pytest.raises(FrozenInstanceError):
+            dto.crm_id = 99  # pyright: ignore[reportAttributeAccessIssue]

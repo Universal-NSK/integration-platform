@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from time import perf_counter
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
 from platform_logging import log_event
 
@@ -23,8 +23,10 @@ from nashdom_sync.contracts.crm import (
     CrmReferences,
     CrmStructure,
     DeveloperFieldsBindings,
+    ExistingCrmCompanyGroup,
+    ExistingCrmDeveloper,
     ExistingCrmEntities,
-    ExistingCrmEntity,
+    ExistingCrmLead,
     LeadFieldsBindings,
     MultiFieldFieldsBindings,
     RequisiteFieldsBindings,
@@ -40,6 +42,13 @@ from .exceptions import (
 from .fields import COMPANY_GROUP_FIELDS, DEVELOPER_FIELDS, LEAD_FIELDS, FieldSpec
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _ExistingCrmRequisite:
+    inn: str
+    crm_id: int
+    parent_id: int
 
 
 @dataclass
@@ -386,42 +395,103 @@ class CrmProvider:
 
     def _build_existing(self, structure: CrmStructure) -> ExistingCrmEntities:
         types, fields = structure.entity_types, structure.entity_fields
-        self._stage = "existing.leads"
-        leads = self._load_existing_entities(
-            types.lead,
-            fields.lead.source_building_id,
-            allow_duplicates=True,
-            stats=self._stats.leads,
-        )
-        self._stage = "existing.developers"
-        developers = self._load_existing_entities(
-            types.company,
-            fields.developer.source_developer_id,
-            stats=self._stats.developers,
-        )
-        self._stage = "existing.company_groups"
-        company_groups = self._load_existing_entities(
-            types.company_group,
-            fields.company_group.source_company_group_id,
-            stats=self._stats.company_groups,
+        leads = self._load_existing_leads(types.lead, fields.lead.source_building_id)
+        developers = self._load_existing_developers(types.company)
+        company_groups = self._load_existing_company_groups(
+            types.company_group, fields.company_group.source_company_group_id
         )
         return ExistingCrmEntities(
             leads=leads, developers=developers, company_groups=company_groups
         )
 
-    def _load_existing_entities(
+    def _load_existing_leads(
+        self, entity_type_id: int, source_id_field: str
+    ) -> Tuple[ExistingCrmLead, ...]:
+        self._stage = "existing.leads"
+        return tuple(
+            ExistingCrmLead(source_id, crm_id)
+            for source_id, crm_id in self._load_source_id_pairs(
+                entity_type_id, source_id_field, allow_duplicates=True, stats=self._stats.leads
+            )
+        )
+
+    def _load_existing_company_groups(
+        self, entity_type_id: int, source_id_field: str
+    ) -> Tuple[ExistingCrmCompanyGroup, ...]:
+        self._stage = "existing.company_groups"
+        return tuple(
+            ExistingCrmCompanyGroup(source_id, crm_id)
+            for source_id, crm_id in self._load_source_id_pairs(
+                entity_type_id, source_id_field, stats=self._stats.company_groups
+            )
+        )
+
+    def _load_existing_developers(self, entity_type_id: int) -> Tuple[ExistingCrmDeveloper, ...]:
+        self._stage = "existing.developers"
+        records = self._client.list_items(entity_type_id, select=["id"])
+        stats = self._stats.developers
+        stats.received = len(records)
+        company_ids = {
+            self._id(record.get("id"), f"Company запись {index}, id")
+            for index, record in enumerate(records)
+        }
+        requisites = self._load_existing_requisites(entity_type_id)
+        self._stage = "existing.developers"
+        seen: Dict[str, int] = {}
+        matched_companies: Set[int] = set()
+        result: List[ExistingCrmDeveloper] = []
+        for requisite in requisites:
+            if requisite.parent_id not in company_ids:
+                continue
+            if requisite.inn in seen:
+                if seen[requisite.inn] != requisite.parent_id:
+                    raise CrmInvalidDataError("CRM Company: один ИНН связан с разными компаниями")
+                continue
+            seen[requisite.inn] = requisite.parent_id
+            matched_companies.add(requisite.parent_id)
+            result.append(ExistingCrmDeveloper(requisite.inn, requisite.parent_id))
+            stats.indexed += 1
+        stats.skipped_empty = len(company_ids - matched_companies)
+        return tuple(result)
+
+    def _load_existing_requisites(self, entity_type_id: int) -> Tuple[_ExistingCrmRequisite, ...]:
+        """entity_type_id is the owner type (Company), not the requisite type."""
+        self._stage = "existing.requisites"
+        records = self._client.list_requisites(filter_={"ENTITY_TYPE_ID": entity_type_id})
+        result: List[_ExistingCrmRequisite] = []
+        for index, record in enumerate(records):
+            context = f"requisite запись {index}"
+            # Defend against an unrelated owner type even if a response ignores the filter.
+            if "ENTITY_TYPE_ID" in record:
+                owner_type = self._id(record["ENTITY_TYPE_ID"], f"{context}, ENTITY_TYPE_ID")
+                if owner_type != entity_type_id:
+                    continue
+            crm_id = self._id(record.get("ID"), f"{context}, ID")
+            parent_id = self._id(record.get("ENTITY_ID"), f"{context}, ENTITY_ID")
+            inn = record.get("RQ_INN")
+            if inn is None:
+                continue
+            if not isinstance(inn, str):
+                raise CrmInvalidDataError(f"CRM {context}: RQ_INN должен быть строкой")
+            inn = inn.strip()
+            if not inn:
+                continue
+            result.append(_ExistingCrmRequisite(inn, crm_id, parent_id))
+        return tuple(result)
+
+    def _load_source_id_pairs(
         self,
         entity_type_id: int,
         source_id_field: str,
         *,
         allow_duplicates: bool = False,
         stats: Optional[_ExistingLoadStats] = None,
-    ) -> Tuple[ExistingCrmEntity, ...]:
+    ) -> Tuple[Tuple[int, int], ...]:
         if stats is None:
             stats = _ExistingLoadStats()
         records = self._client.list_items(entity_type_id, select=["id", source_id_field])
         stats.received = len(records)
-        result: List[ExistingCrmEntity] = []
+        result: List[Tuple[int, int]] = []
         seen: Dict[int, int] = {}
         for index, record in enumerate(records):
             context = f"entityTypeId={entity_type_id}, запись {index}"
@@ -451,7 +521,7 @@ class CrmProvider:
                     f"crm_id={seen[source_id]} и {crm_id}"
                 )
             seen[source_id] = crm_id
-            result.append(ExistingCrmEntity(source_id, crm_id))
+            result.append((source_id, crm_id))
             stats.indexed += 1
         return tuple(result)
 

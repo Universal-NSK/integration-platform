@@ -8,3 +8,5 @@ build/
 *.egg-info/
 examples/
 temp/
+apps/nashdom_sync/src/nashdom_sync/providers/crm_provider/__main__.py
+crm_context.snapshot.json

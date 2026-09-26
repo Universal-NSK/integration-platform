@@ -90,16 +90,28 @@ class CrmStructure:
 
 
 @dataclass(frozen=True)
-class ExistingCrmEntity:
+class ExistingCrmLead:
+    source_id: int
+    crm_id: int
+
+
+@dataclass(frozen=True)
+class ExistingCrmDeveloper:
+    inn: str
+    crm_id: int
+
+
+@dataclass(frozen=True)
+class ExistingCrmCompanyGroup:
     source_id: int
     crm_id: int
 
 
 @dataclass(frozen=True)
 class ExistingCrmEntities:
-    leads: Tuple[ExistingCrmEntity, ...]
-    developers: Tuple[ExistingCrmEntity, ...]
-    company_groups: Tuple[ExistingCrmEntity, ...]
+    leads: Tuple[ExistingCrmLead, ...]
+    developers: Tuple[ExistingCrmDeveloper, ...]
+    company_groups: Tuple[ExistingCrmCompanyGroup, ...]
 
 
 @dataclass(frozen=True)
