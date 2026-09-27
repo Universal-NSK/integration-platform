@@ -39,8 +39,26 @@ from nashdom_sync.contracts.settings import (
     RegionSettings,
     SyncSettings,
 )
+from nashdom_sync.contracts.transform import (
+    AddAddressCommand,
+    AddItemCommand,
+    AddRequisiteCommand,
+    CrmCommand,
+    PlannedOperation,
+    RuntimeBinding,
+    SyncPlan,
+    TransformResult,
+)
 
 __all__ = [
+    "AddItemCommand",
+    "AddRequisiteCommand",
+    "AddAddressCommand",
+    "CrmCommand",
+    "PlannedOperation",
+    "RuntimeBinding",
+    "SyncPlan",
+    "TransformResult",
     "AddressFieldsBindings",
     "CompanyGroupFieldsBindings",
     "CrmAddressType",
