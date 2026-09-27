@@ -58,7 +58,7 @@ from platform_logging.formatter import DETAILS_ATTRIBUTE, EVENT_ATTRIBUTE
 
 
 def context() -> CrmContext:
-    # Nonstandard IDs and field names ensure production never hardcodes CRM bindings.
+    # Нестандартные ID и имена полей проверяют отсутствие жёстко заданных привязок CRM.
     return CrmContext(
         CrmStructure(
             CrmEntityTypeId(101, 104, 105, 108),
@@ -288,7 +288,7 @@ def test_existing_new_combinations(company_exists: bool, group_exists: bool) -> 
 
 def test_existing_leads_do_not_create_parents() -> None:
     crm = replace(context(), existing=ExistingCrmEntities((ExistingCrmLead(1, 100),), (), ()))
-    # No parent lookup is needed for skipped objects.
+    # Для пропущенных объектов поиск родителей не требуется.
     assert plan(replace(source(), developers=[], company_groups=[]), crm).operations == ()
 
 
@@ -567,7 +567,7 @@ def test_validator_binding_producer_compatibility(reference: str, producer_kind:
     command = commands[consumer_kind]
     payload = dict(command.fields)
     del payload[field]
-    # IDs are deliberately opaque: compatibility must use the producer command.
+    # ID намеренно не раскрывают тип: совместимость проверяется по команде-источнику.
     producer = PlannedOperation("first", commands[producer_kind])
     consumer = PlannedOperation(
         "second", replace(command, fields=payload), (RuntimeBinding(field, "first"),)
@@ -577,7 +577,7 @@ def test_validator_binding_producer_compatibility(reference: str, producer_kind:
     if producer_kind == expected_producer:
         validator.validate(candidate)
     else:
-        with pytest.raises(SyncPlanValidationError, match="Binding source must create"):
+        with pytest.raises(SyncPlanValidationError, match="Источник привязки должен создавать"):
             validator.validate(candidate)
 
 
@@ -598,7 +598,7 @@ def test_validator_rejects_unsupported_item_entity_type(entity_kind: str) -> Non
         else max(types.lead, types.company, types.company_group, types.requisite) + 1
     )
     candidate = SyncPlan((PlannedOperation("only", AddItemCommand(entity_type_id, {})),))
-    with pytest.raises(SyncPlanValidationError, match="Unsupported item entity type ID"):
+    with pytest.raises(SyncPlanValidationError, match="Неподдерживаемый ID типа сущности элемента"):
         SyncPlanValidator(crm.structure).validate(candidate)
 
 
@@ -649,7 +649,7 @@ def test_representative_local_samples() -> None:
     ]
     snapshot = repo / "crm_context.snapshot.json"
     if not all(path.exists() for path in paths + [snapshot]):
-        pytest.skip("Optional local samples are not committed to the repository")
+        pytest.skip("Необязательные локальные примеры не хранятся в репозитории")
     rows = [
         cast(List[Dict[str, Any]], json.loads(path.read_text(encoding="utf-8"))) for path in paths
     ]

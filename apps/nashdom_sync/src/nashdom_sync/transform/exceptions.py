@@ -1,10 +1,10 @@
 class TransformError(Exception):
-    """Base error of the Transform stage."""
+    """Базовая ошибка этапа Transform."""
 
 
 class TransformInputError(TransformError):
-    """Inputs cannot produce an unambiguous plan."""
+    """Входные данные не позволяют построить однозначный план."""
 
 
 class SyncPlanValidationError(TransformError):
-    """The constructed plan is structurally invalid."""
+    """Построенный план имеет некорректную структуру."""

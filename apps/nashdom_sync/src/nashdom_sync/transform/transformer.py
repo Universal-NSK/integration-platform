@@ -30,8 +30,8 @@ def _index(items: Iterable[T], key: Callable[[T], K], value: Callable[[T], V]) -
     for item in items:
         item_key = key(item)
         if item_key in result:
-            # Never include natural keys (in particular INN or employee names) in errors.
-            raise TransformInputError("Duplicate input index key")
+            # Не включаем естественные ключи (в частности ИНН или имена сотрудников) в ошибки.
+            raise TransformInputError("Повторяющийся ключ индекса входных данных")
         result[item_key] = value(item)
     return result
 
@@ -47,7 +47,7 @@ class _TransformIndexes:
 
 
 class SyncPlanTransformer:
-    """Build a deterministic plan in ascending source ID order within each phase."""
+    """Построить детерминированный план по возрастанию исходных ID внутри каждой фазы."""
 
     def transform(
         self,
@@ -56,7 +56,7 @@ class SyncPlanTransformer:
         region_settings: RegionSettings,
     ) -> SyncPlan:
         indexes = self._build_indexes(extract_result, crm_context)
-        # Validate all configured names, including unused regional assignments.
+        # Проверяем все настроенные имена, включая неиспользованные назначения по регионам.
         self._resolve_default_manager_id(region_settings, indexes)
         for region_id in region_settings.assignment:
             self._resolve_region_manager_id(region_id, region_settings, indexes)
@@ -98,10 +98,10 @@ class SyncPlanTransformer:
     ) -> Tuple[ExtractedDeveloper, ...]:
         required = sorted({obj.developer_id for obj in objects})
         if any(key not in indexes.developers_by_id for key in required):
-            raise TransformInputError("Missing required developer")
+            raise TransformInputError("Отсутствует необходимый застройщик")
         developers = tuple(indexes.developers_by_id[key] for key in required)
-        # Different source IDs for the same natural identity are ambiguous: do not
-        # create duplicate companies or arbitrarily choose one payload/manager.
+        # Разные исходные ID при одном естественном ключе создают неоднозначность:
+        # не создаём дубликаты компаний и не выбираем произвольно данные или ответственного.
         _index(developers, lambda x: x.inn, lambda x: x)
         return developers
 
@@ -118,18 +118,18 @@ class SyncPlanTransformer:
                 continue
             developer = indexes.developers_by_id.get(obj.developer_id)
             if developer is None:
-                raise TransformInputError("Missing required developer")
+                raise TransformInputError("Отсутствует необходимый застройщик")
             if developer.company_group_id is not None and developer.company_group_id != group_id:
-                raise TransformInputError("Inconsistent object/developer group")
+                raise TransformInputError("Группы объекта и застройщика не совпадают")
             if (
                 obj.developer_id in developer_groups
                 and developer_groups[obj.developer_id] != group_id
             ):
-                raise TransformInputError("Conflicting object groups for developer")
+                raise TransformInputError("У объектов одного застройщика указаны разные группы")
             developer_groups[obj.developer_id] = group_id
             required.add(group_id)
         if any(key not in indexes.company_groups_by_id for key in required):
-            raise TransformInputError("Missing required company group")
+            raise TransformInputError("Отсутствует необходимая группа компаний")
         return tuple(indexes.company_groups_by_id[key] for key in sorted(required))
 
     def _build_company_group_operations(
@@ -255,7 +255,7 @@ class SyncPlanTransformer:
             elif obj.object_type == ExtractedObjectTypeEnum.NON_RESIDENTIAL:
                 building_type = refs.building_type.non_residential
             else:
-                raise TransformInputError("Unsupported object type")
+                raise TransformInputError("Неподдерживаемый тип объекта")
             payload: Dict[str, Any] = {
                 fields.source_building_id: obj.id,
                 fields.title: obj.title,
@@ -310,7 +310,7 @@ class SyncPlanTransformer:
     ) -> int:
         name = region_settings.assignment.get(region_id, region_settings.default_assigned_by_name)
         if name not in indexes.managers_by_name:
-            raise TransformInputError("Unresolved regional manager")
+            raise TransformInputError("Не найден ответственный для региона")
         return indexes.managers_by_name[name]
 
     def _resolve_default_manager_id(
@@ -318,5 +318,5 @@ class SyncPlanTransformer:
     ) -> int:
         name = region_settings.default_assigned_by_name
         if name not in indexes.managers_by_name:
-            raise TransformInputError("Unresolved default manager")
+            raise TransformInputError("Не найден ответственный по умолчанию")
         return indexes.managers_by_name[name]

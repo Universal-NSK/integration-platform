@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class TransformService:
-    """Orchestrate pure plan construction and validation."""
+    """Организовать построение и проверку плана без внешних побочных эффектов."""
 
     def transform(
         self,

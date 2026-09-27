@@ -1,4 +1,4 @@
-"""Declarative, sequential write plan; no CRM client dependencies."""
+"""Декларативный последовательный план записи без зависимостей от клиента CRM."""
 
 from dataclasses import dataclass
 from typing import Any, Mapping, Tuple, Union
