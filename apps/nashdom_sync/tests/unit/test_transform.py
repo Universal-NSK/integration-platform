@@ -40,6 +40,7 @@ from nashdom_sync.contracts.transform import (
     AddAddressCommand,
     AddItemCommand,
     AddRequisiteCommand,
+    CrmCommand,
     PlannedOperation,
     RuntimeBinding,
     SyncPlan,
@@ -523,6 +524,82 @@ def test_validator_rejects_invalid_plans(case: str) -> None:
         ops[index] = replace(ops[index], command=command)
     with pytest.raises(SyncPlanValidationError):
         SyncPlanValidator(crm.structure).validate(SyncPlan(tuple(ops)))
+
+
+def reference_commands(crm: CrmContext) -> Dict[str, CrmCommand]:
+    fields = crm.structure.entity_fields
+    types = crm.structure.entity_types
+    return {
+        "company": AddItemCommand(types.company, {}),
+        "group": AddItemCommand(types.company_group, {}),
+        "lead": AddItemCommand(
+            types.lead, {fields.lead.company_id: 700, fields.lead.company_group_bitrix_id: 800}
+        ),
+        "requisite": AddRequisiteCommand(
+            {
+                fields.requisite.entity_id_to_bind: 700,
+                fields.requisite.entity_type_id: types.company,
+                fields.requisite.preset_id: crm.references.organization_requisite_preset_id,
+            }
+        ),
+        "address": AddAddressCommand(
+            {
+                fields.address.entity_id_to_bind: 900,
+                fields.address.entity_type_id_to_bind: types.requisite,
+                fields.address.address_type_id: crm.references.address_types.actual,
+            }
+        ),
+    }
+
+
+@pytest.mark.parametrize("producer_kind", ["company", "group", "lead", "requisite", "address"])
+@pytest.mark.parametrize("reference", ["requisite", "address", "lead_company", "lead_group"])
+def test_validator_binding_producer_compatibility(reference: str, producer_kind: str) -> None:
+    crm = context()
+    fields = crm.structure.entity_fields
+    consumer_kind, field, expected_producer = {
+        "requisite": ("requisite", fields.requisite.entity_id_to_bind, "company"),
+        "address": ("address", fields.address.entity_id_to_bind, "requisite"),
+        "lead_company": ("lead", fields.lead.company_id, "company"),
+        "lead_group": ("lead", fields.lead.company_group_bitrix_id, "group"),
+    }[reference]
+    commands = reference_commands(crm)
+    command = commands[consumer_kind]
+    payload = dict(command.fields)
+    del payload[field]
+    # IDs are deliberately opaque: compatibility must use the producer command.
+    producer = PlannedOperation("first", commands[producer_kind])
+    consumer = PlannedOperation(
+        "second", replace(command, fields=payload), (RuntimeBinding(field, "first"),)
+    )
+    candidate = SyncPlan((producer, consumer))
+    validator = SyncPlanValidator(crm.structure)
+    if producer_kind == expected_producer:
+        validator.validate(candidate)
+    else:
+        with pytest.raises(SyncPlanValidationError, match="Binding source must create"):
+            validator.validate(candidate)
+
+
+@pytest.mark.parametrize("consumer_kind", ["requisite", "address", "lead"])
+def test_validator_accepts_literal_references(consumer_kind: str) -> None:
+    crm = context()
+    command = reference_commands(crm)[consumer_kind]
+    SyncPlanValidator(crm.structure).validate(SyncPlan((PlannedOperation("only", command),)))
+
+
+@pytest.mark.parametrize("entity_kind", ["unknown", "requisite"])
+def test_validator_rejects_unsupported_item_entity_type(entity_kind: str) -> None:
+    crm = context()
+    types = crm.structure.entity_types
+    entity_type_id = (
+        types.requisite
+        if entity_kind == "requisite"
+        else max(types.lead, types.company, types.company_group, types.requisite) + 1
+    )
+    candidate = SyncPlan((PlannedOperation("only", AddItemCommand(entity_type_id, {})),))
+    with pytest.raises(SyncPlanValidationError, match="Unsupported item entity type ID"):
+        SyncPlanValidator(crm.structure).validate(candidate)
 
 
 def test_service_validation_error_propagates_and_logs_safely(

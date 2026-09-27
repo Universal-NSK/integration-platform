@@ -66,6 +66,12 @@ class SyncPlanValidator:
             _require(all(_text(key) for key in command.fields), "Invalid command field name")
             if isinstance(command, AddItemCommand):
                 _require(_positive_id(command.entity_type_id), "Invalid item entity type ID")
+                entity_types = self._structure.entity_types
+                _require(
+                    command.entity_type_id
+                    in (entity_types.lead, entity_types.company, entity_types.company_group),
+                    "Unsupported item entity type ID",
+                )
                 if command.entity_type_id == self._structure.entity_types.lead:
                     self._require_reference(op, fields.lead.company_id)
                     group_field = fields.lead.company_group_bitrix_id
@@ -107,7 +113,7 @@ class SyncPlanValidator:
             _require(_positive_id(op.command.fields[field]), "Invalid literal reference ID")
 
     def _validate_bindings(self, operations: Tuple[PlannedOperation, ...]) -> None:
-        ids = {op.operation_id for op in operations}
+        by_id = {op.operation_id: op for op in operations}
         for op in operations:
             seen: Set[str] = set()
             for binding in op.bindings:
@@ -116,8 +122,34 @@ class SyncPlanValidator:
                 )
                 _require(binding.field not in seen, "Duplicate binding field")
                 _require(binding.field not in op.command.fields, "Literal and binding conflict")
-                _require(binding.source_operation_id in ids, "Unknown binding source")
+                _require(binding.source_operation_id in by_id, "Unknown binding source")
+                self._validate_binding_source(op, binding.field, by_id[binding.source_operation_id])
                 seen.add(binding.field)
+
+    def _validate_binding_source(
+        self, consumer: PlannedOperation, field: str, producer: PlannedOperation
+    ) -> None:
+        fields = self._structure.entity_fields
+        entity_types = self._structure.entity_types
+        command = consumer.command
+        source = producer.command
+        if isinstance(command, AddAddressCommand) and field == fields.address.entity_id_to_bind:
+            _require(isinstance(source, AddRequisiteCommand), "Binding source must create a requisite")
+            return
+
+        expected_entity_type = None
+        if isinstance(command, AddRequisiteCommand) and field == fields.requisite.entity_id_to_bind:
+            expected_entity_type = entity_types.company
+        elif isinstance(command, AddItemCommand) and command.entity_type_id == entity_types.lead:
+            if field == fields.lead.company_id:
+                expected_entity_type = entity_types.company
+            elif field == fields.lead.company_group_bitrix_id:
+                expected_entity_type = entity_types.company_group
+        if expected_entity_type is not None:
+            _require(
+                isinstance(source, AddItemCommand) and source.entity_type_id == expected_entity_type,
+                "Binding source must create the required item entity type",
+            )
 
     def _validate_dependencies(self, operations: Tuple[PlannedOperation, ...]) -> None:
         ids = {op.operation_id for op in operations}
