@@ -308,17 +308,28 @@ def test_atomic_write_flushes_before_replace(
     assert [p.name for p in tmp_path.iterdir()] == ["run.json"]
 
 
-def test_start_write_failure_leaves_no_partial_manifest(
+@pytest.mark.parametrize("failure", ["replace", "fsync", "dump"])
+def test_start_write_failure_leaves_no_partial_manifest_and_allows_retry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    failure: str,
 ) -> None:
     def fail(*args: Any, **kwargs: Any) -> None:
-        raise OSError("Тестовый сбой замены")
+        if failure == "dump":
+            args[1].write("{частичная запись")
+        raise OSError("Тестовый сбой записи")
 
-    monkeypatch.setattr(store_module.os, "replace", fail)
-    with pytest.raises(RunArtifactError):
-        RunArtifactStore.start(tmp_path)
+    target = store_module.json if failure == "dump" else store_module.os
+    with monkeypatch.context() as patch:
+        patch.setattr(target, failure, fail)
+        with pytest.raises(RunArtifactError):
+            RunArtifactStore.start(tmp_path)
     assert list(tmp_path.iterdir()) == []
+
+    store = RunArtifactStore.start(tmp_path)
+    assert store.get_run_dir() == tmp_path
+    assert _json(tmp_path / "run.json")["status"] == "RUNNING"
+    assert [path.name for path in tmp_path.iterdir()] == ["run.json"]
 
 
 def test_non_json_command_fields_cannot_silently_lose_type(tmp_path: Path) -> None:
@@ -330,3 +341,53 @@ def test_non_json_command_fields_cannot_silently_lose_type(tmp_path: Path) -> No
         store.save_sync_plan(SyncPlan((changed,)))
     assert "private" not in str(error.value)
     assert not (tmp_path / "sync_plan.json").exists()
+
+
+def test_start_in_empty_directory_creates_initial_manifest(tmp_path: Path) -> None:
+    assert list(tmp_path.iterdir()) == []
+    store = RunArtifactStore.start(tmp_path)
+    assert store.get_run_dir() == tmp_path
+    assert _json(tmp_path / "run.json")["status"] == "RUNNING"
+    assert [path.name for path in tmp_path.iterdir()] == ["run.json"]
+
+
+def test_repeated_start_preserves_manifest_bytes(tmp_path: Path) -> None:
+    store = RunArtifactStore.start(tmp_path)
+    store.mark_completed()
+    manifest_path = tmp_path / "run.json"
+    before = manifest_path.read_bytes()
+
+    with pytest.raises(RunArtifactError) as error:
+        RunArtifactStore.start(tmp_path)
+
+    assert str(error.value) == "Каталог запуска уже инициализирован"
+    assert manifest_path.read_bytes() == before
+    assert [path.name for path in tmp_path.iterdir()] == ["run.json"]
+
+
+@pytest.mark.parametrize("content", [b"", b"invalid JSON"])
+def test_existing_manifest_is_rejected_regardless_of_content(
+    tmp_path: Path,
+    content: bytes,
+) -> None:
+    manifest_path = tmp_path / "run.json"
+    manifest_path.write_bytes(content)
+
+    with pytest.raises(RunArtifactError) as error:
+        RunArtifactStore.start(tmp_path)
+
+    assert str(error.value) == "Каталог запуска уже инициализирован"
+    assert manifest_path.read_bytes() == content
+
+
+def test_other_files_do_not_prevent_start(tmp_path: Path) -> None:
+    other_file = tmp_path / "some_file.txt"
+    other_file.write_text("Сохранить без изменений", encoding="utf-8")
+    before = other_file.read_bytes()
+
+    store = RunArtifactStore.start(tmp_path)
+
+    assert store.get_run_dir() == tmp_path
+    assert _json(tmp_path / "run.json")["status"] == "RUNNING"
+    assert other_file.read_bytes() == before
+    assert {path.name for path in tmp_path.iterdir()} == {"some_file.txt", "run.json"}

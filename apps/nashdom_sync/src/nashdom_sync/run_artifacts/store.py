@@ -35,10 +35,12 @@ class RunArtifactStore:
 
     @classmethod
     def start(cls, run_dir: Path) -> "RunArtifactStore":
-        """Записать начальный манифест в существующий каталог запуска."""
+        """Записать манифест только в ещё не инициализированный каталог запуска."""
         try:
             if not run_dir.is_dir():
                 raise ValueError("run_dir должен быть существующим каталогом")
+            if (run_dir / "run.json").exists():
+                raise RunArtifactError("Каталог запуска уже инициализирован")
             manifest = RunManifest(
                 schema_version=1,
                 run_id=run_dir.name,
