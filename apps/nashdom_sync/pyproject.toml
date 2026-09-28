@@ -16,6 +16,9 @@ dependencies = [
     "tomli>=2.4.1",
 ]
 
+[project.scripts]
+nashdom-sync = "nashdom_sync.main:main"
+
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]
 build-backend = "uv_build"

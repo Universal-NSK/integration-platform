@@ -114,9 +114,47 @@ class RegionSettings(_StrictSettingsModel):
         return converted
 
 
+class LoggingSettings(_StrictSettingsModel):
+    """Настройки структурированного логирования синхронизации."""
+
+    level: StrictStr
+    console: StrictBool
+    log_payloads: StrictBool
+    max_bytes: StrictInt
+    backup_count: StrictInt
+
+    @validator("level")  # pyright: ignore[reportUntypedFunctionDecorator]
+    def _require_level(cls, value: str) -> str:
+        if value.strip().upper() not in {
+            "CRITICAL",
+            "FATAL",
+            "ERROR",
+            "WARNING",
+            "WARN",
+            "INFO",
+            "DEBUG",
+            "NOTSET",
+        }:
+            raise ValueError("level должен быть допустимым именем уровня логирования")
+        return value
+
+    @validator("max_bytes")  # pyright: ignore[reportUntypedFunctionDecorator]
+    def _require_positive_max_bytes(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("max_bytes должен быть положительным")
+        return value
+
+    @validator("backup_count")  # pyright: ignore[reportUntypedFunctionDecorator]
+    def _require_nonnegative_backup_count(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("backup_count не должен быть отрицательным")
+        return value
+
+
 class SyncSettings(_StrictSettingsModel):
     """Единая проверенная конфигурация синхронизации."""
 
+    logging: LoggingSettings
     browser: BrowserSettings
     bitrix: BitrixClientSettings
     extract: ExtractionSettings

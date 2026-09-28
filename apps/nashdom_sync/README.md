@@ -144,3 +144,44 @@ CrmAmbiguousSemanticError, CrmInvalidDataError. Обязательная ста�
 полностью, либо provide поднимает ошибку; частичный контекст не возвращается.
 Тесты Provider находятся в tests/unit/test_crm_provider.py; сеть в unit-тестах
 блокируется общей fixture. Transform, Load и C4 не изменены.
+
+## Оркестратор до Load
+
+Production entrypoint: `nashdom-sync` → `nashdom_sync.main:main`.
+`main()` определяет `RuntimePaths.from_project(start=Path(__file__))` и вызывает
+`nashdom_sync.orchestrator.SyncOrchestrator().run(paths) -> None`.
+
+Каждый запуск создаёт один каталог `nashdom_sync/<timestamp>[_N]` в ProgramData
+и начинает `run.json` до чтения настроек. В `INITIALIZATION` локально создаются
+SettingsProvider, BrowserProvider, ExtractService и TransformService; затем
+читаются настройки, настраивается логирование и создаётся CrmProvider.
+Обязательный блок `[logging]` в `config/sync.toml` задаёт `level`, `console`,
+`log_payloads`, `max_bytes > 0`, `backup_count >= 0`.
+
+Далее последовательно выполняются `CRM_CONTEXT` → `EXTRACT` → `TRANSFORM`.
+Каждая стадия начинается с обновления manifest и завершается только после
+сохранения своего снимка: `crm_context.json`, `extract_result.json`, `sync_plan.json`.
+Transform получает исходные объекты в памяти. Extract получает `settings.extract`
+согласно существующему API `ExtractService`, который сам использует `.nashdom`.
+Load не выполняется; успех означает `COMPLETED / TRANSFORM`.
+
+Браузер запускается только в EXTRACT и закрывается оркестратором после Extract.
+Ошибка закрытия после успешного Extract останавливает запуск. При ошибке Extract
+сбой закрытия подавляется, чтобы сохранить исходное исключение.
+
+Файл `nashdom_sync.log` находится рядом с manifest и снимками. Пространство
+логгера `nashdom_sync` принимает события дочерних компонентов. Оркестратор пишет
+`sync_started`, `stage_started`, `stage_completed`, `sync_completed`, `sync_failed`
+с `run_id`, `stage`, `duration_seconds`; при ошибке добавляет только `exception_type`,
+без текста исключения и payload. Обычные события имеют уровень INFO, ошибки ERROR;
+фильтрация следует настройке `logging.level`. Начальные события записываются
+после настройки логгера, продолжительность INITIALIZATION включает чтение настроек.
+
+Предметные исключения выходят без обёртки. Только ошибка настройки логирования
+получает `LoggingInitializationError(SyncOrchestratorError)` с исходной причиной.
+Ошибки создания каталога сохраняют исходный тип. Если хранилище уже начато,
+ошибка приводит к попытке записать `FAILED`, текущую стадию и конкретный тип.
+Сбой записи `sync_failed` или `mark_failed` не подменяет первичную ошибку;
+при недоступности диска обновление manifest не гарантируется. При ошибке настроек
+лог-файла может ещё не быть. Сбои создания каталога или начального manifest
+происходят до появления рабочего хранилища.

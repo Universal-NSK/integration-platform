@@ -21,6 +21,13 @@ from pydantic import ValidationError
 from runtime_files import RuntimeFileReadError, RuntimePaths
 
 VALID_APP_CONFIG = """
+[logging]
+level = "INFO"
+console = true
+log_payloads = false
+max_bytes = 50000000
+backup_count = 4
+
 [browser]
 headless = false
 
@@ -611,3 +618,56 @@ def test_new_settings_are_immutable(tmp_path: Path) -> None:
         settings.region.default_assigned_by_name = "Другой"
     with pytest.raises(TypeError, match="immutable"):
         settings.bitrix = settings.bitrix
+
+
+def test_provide_logging_settings(tmp_path: Path) -> None:
+    provider, _ = _provider(tmp_path)
+    settings = provider.provide().logging
+    assert settings.level == "INFO"
+    assert settings.console is True
+    assert settings.log_payloads is False
+    assert settings.max_bytes == 50000000
+    assert settings.backup_count == 4
+
+
+@pytest.mark.parametrize(
+    "old, new, parameter",
+    [
+        ('level = "INFO"', 'level = ""', "level"),
+        ('level = "INFO"', 'level = "   "', "level"),
+        ('level = "INFO"', 'level = "INVALID"', "level"),
+        ('level = "INFO"', "level = 20", "level"),
+        ("max_bytes = 50000000", "max_bytes = 0", "max_bytes"),
+        ("max_bytes = 50000000", "max_bytes = -1", "max_bytes"),
+        ("max_bytes = 50000000", "max_bytes = true", "max_bytes"),
+        ("backup_count = 4", "backup_count = -1", "backup_count"),
+        ("backup_count = 4", "backup_count = false", "backup_count"),
+        ("console = true", 'console = "true"', "console"),
+        ("log_payloads = false", "log_payloads = 0", "log_payloads"),
+    ],
+)
+def test_provide_rejects_invalid_logging(
+    tmp_path: Path, old: str, new: str, parameter: str
+) -> None:
+    provider, _ = _provider(tmp_path, app_config=VALID_APP_CONFIG.replace(old, new))
+    with pytest.raises(ConfigurationError, match="logging." + parameter) as caught:
+        provider.provide()
+    assert isinstance(caught.value.__cause__, ValidationError)
+
+
+@pytest.mark.parametrize(
+    "level", ["CRITICAL", "FATAL", "ERROR", "WARNING", "WARN", "INFO", "DEBUG", "NOTSET", " info "]
+)
+def test_logging_levels_match_runtime_config(tmp_path: Path, level: str) -> None:
+    from platform_logging import LoggingConfig
+
+    provider, _ = _provider(
+        tmp_path,
+        app_config=VALID_APP_CONFIG.replace('level = "INFO"', f'level = "{level}"').replace(
+            "backup_count = 4", "backup_count = 0"
+        ),
+    )
+    settings = provider.provide().logging
+    config = LoggingConfig(**settings.dict())
+    assert config.level == level
+    assert config.backup_count == 0
