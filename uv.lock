@@ -303,12 +303,6 @@ wheels = [
 name = "platform-logging"
 version = "0.1.0"
 source = { editable = "packages/platform_logging" }
-dependencies = [
-    { name = "runtime-files" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "runtime-files", editable = "packages/runtime_files" }]
 
 [[package]]
 name = "pluggy"

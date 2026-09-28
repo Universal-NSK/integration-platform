@@ -19,10 +19,11 @@ def test_build_runtime_composes_real_gateway_and_creates_log_session(tmp_path: P
             program_data_root=program_data_root,
         )
 
+        run_dir = paths.create_run_dir("bitrix_gateway")
         runtime = build_runtime(
             settings=valid_settings(),
             secrets=valid_secrets(),
-            paths=paths,
+            run_dir=run_dir,
         )
 
         try:
@@ -31,9 +32,9 @@ def test_build_runtime_composes_real_gateway_and_creates_log_session(tmp_path: P
             assert isinstance(runtime.dispatcher, RequestDispatcher)
             assert isinstance(runtime.api, GatewayHttpApi)
             assert runtime.logging_session.log_file.is_file()
-            assert runtime.logging_session.log_file.parent == (
-                program_data_root / "logs" / "bitrix_gateway"
-            )
+            assert runtime.logging_session.log_file == run_dir / "bitrix_gateway.log"
+            assert run_dir.parent == program_data_root / "bitrix_gateway"
+            assert list(run_dir.parent.iterdir()) == [run_dir]
             assert logging.getLogger("httpx").level == logging.WARNING
             assert logging.getLogger("httpcore").level == logging.WARNING
         finally:

@@ -65,7 +65,7 @@ def test_empty_queue_worker_starts_once_and_shutdown_closes_same_loop_resources(
         runtime = build_runtime(
             settings=valid_settings(),
             secrets=valid_secrets(),
-            paths=paths,
+            run_dir=paths.create_run_dir("bitrix_gateway"),
         )
         app = create_app(runtime)
         transport = httpx.ASGITransport(app=app)
@@ -141,13 +141,13 @@ def test_run_builds_runtime_and_awaits_uvicorn_server_inside_running_loop(
     def build_runtime_in_loop(
         settings: GatewaySettings,
         secrets: GatewaySecrets,
-        paths: RuntimePaths,
+        run_dir: Path,
     ) -> GatewayRuntime:
         state.build_loop = asyncio.get_running_loop()
         state.runtime = build_runtime(
             settings=settings,
             secrets=secrets,
-            paths=paths,
+            run_dir=run_dir,
         )
         return state.runtime
 
@@ -173,3 +173,5 @@ def test_run_builds_runtime_and_awaits_uvicorn_server_inside_running_loop(
     assert state.build_loop is state.serve_loop
     assert state.runtime is not None
     assert state.runtime.http_client.is_closed is True
+
+    assert len(list((program_data_root / "bitrix_gateway").iterdir())) == 1

@@ -1,5 +1,6 @@
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
 from platform_logging import (
@@ -7,7 +8,6 @@ from platform_logging import (
     LoggingSession,
     configure_logging,
 )
-from runtime_files import RuntimePaths
 
 from bitrix_gateway.dispatch.dispatcher import RequestDispatcher
 from bitrix_gateway.dispatch.queue import InMemoryJobQueue
@@ -44,14 +44,14 @@ def build_rate_limiter(settings: GatewaySettings) -> RateLimiter:
 def build_runtime(
     settings: GatewaySettings,
     secrets: GatewaySecrets,
-    paths: RuntimePaths,
+    run_dir: Path,
 ) -> GatewayRuntime:
     """Собрать зависимости Gateway без изменения их жизненного цикла."""
 
     logging_session = configure_logging(
         service_name="bitrix_gateway",
         logger_name="bitrix_gateway",
-        paths=paths,
+        run_dir=run_dir,
         config=LoggingConfig(
             level=settings.logging.level,
             console=settings.logging.console,

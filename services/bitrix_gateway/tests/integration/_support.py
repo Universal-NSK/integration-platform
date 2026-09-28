@@ -95,7 +95,7 @@ def assemble_gateway(
     logging_session = configure_logging(
         service_name="bitrix_gateway",
         logger_name="bitrix_gateway",
-        paths=paths,
+        run_dir=paths.create_run_dir("bitrix_gateway"),
         config=LoggingConfig(
             level="INFO",
             console=False,

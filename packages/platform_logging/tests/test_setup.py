@@ -1,20 +1,16 @@
 import logging
 import re
-from datetime import datetime
 from pathlib import Path
 from typing import List
 
-import platform_logging.setup as platform_setup
 import pytest
 from platform_logging import LoggingConfig, configure_logging, log_event
-from runtime_files import RuntimePaths
 
 
-def _paths(tmp_path: Path) -> RuntimePaths:
-    return RuntimePaths(
-        repo_root=tmp_path / "repository",
-        program_data_root=tmp_path / "program-data",
-    )
+def _run_dir(tmp_path: Path) -> Path:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir(exist_ok=True)
+    return run_dir
 
 
 def _config(*, console: bool = False) -> LoggingConfig:
@@ -36,31 +32,25 @@ def _handler_kind(handler: logging.Handler) -> str:
     return str(handler.__dict__.get("_platform_logging_kind"))
 
 
-def test_log_directory_and_collision_safe_name_are_created(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    started_at = datetime(2026, 8, 27, 20, 31, 14)
-    monkeypatch.setattr(platform_setup, "_current_time", lambda: started_at)
-    paths = _paths(tmp_path)
+def test_existing_run_dir_and_stable_file_name(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    first = configure_logging("bitrix_gateway", "test.naming", run_dir, _config())
+    second = configure_logging("bitrix_gateway", "test.naming", run_dir, _config())
+    assert first.log_file == second.log_file == run_dir / "bitrix_gateway.log"
+    assert list(run_dir.iterdir()) == [first.log_file]
 
-    first = configure_logging("bitrix_gateway", "test.naming", paths, _config())
-    second = configure_logging("bitrix_gateway", "test.naming", paths, _config())
 
-    expected_dir = tmp_path / "program-data" / "logs" / "bitrix_gateway"
-    assert first.log_file.parent == expected_dir
-    assert first.log_file.name == "bitrix_gateway_2026-08-27_20-31-14.log"
-    assert second.log_file.name == "bitrix_gateway_2026-08-27_20-31-14_2.log"
-    assert first.log_file.is_file()
-    assert second.log_file.is_file()
-    assert re.fullmatch(
-        r"bitrix_gateway_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:_\d+)?\.log",
-        second.log_file.name,
-    )
+@pytest.mark.parametrize("as_file", [False, True])
+def test_run_dir_must_exist_and_be_directory(tmp_path: Path, as_file: bool) -> None:
+    run_dir = tmp_path / "invalid"
+    if as_file:
+        run_dir.touch()
+    with pytest.raises(ValueError, match="run_dir"):
+        configure_logging("test_service", "test.invalid", run_dir, _config())
 
 
 def test_standard_and_structured_events_are_utf8_single_lines(tmp_path: Path) -> None:
-    session = configure_logging("basic_service", "test.basic", _paths(tmp_path), _config())
+    session = configure_logging("basic_service", "test.basic", _run_dir(tmp_path), _config())
     logger = logging.getLogger("test.basic")
 
     logger.info("gateway_started")
@@ -88,7 +78,7 @@ def test_console_handler_is_optional(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    configure_logging("console_on", "test.console_on", _paths(tmp_path), _config(console=True))
+    configure_logging("console_on", "test.console_on", _run_dir(tmp_path), _config(console=True))
     capsys.readouterr()
 
     log_event(logging.getLogger("test.console_on"), "INFO", "console_event")
@@ -102,7 +92,7 @@ def test_console_false_adds_no_package_console_output(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    configure_logging("console_off", "test.console_off", _paths(tmp_path), _config())
+    configure_logging("console_off", "test.console_off", _run_dir(tmp_path), _config())
     capsys.readouterr()
 
     log_event(logging.getLogger("test.console_off"), logging.INFO, "file_only_event")
@@ -115,15 +105,9 @@ def test_console_false_adds_no_package_console_output(
 
 def test_reconfigure_replaces_owned_handlers_without_duplicates(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        platform_setup,
-        "_current_time",
-        lambda: datetime(2026, 8, 27, 20, 31, 14),
-    )
     config = _config(console=True)
-    first = configure_logging("reconfigure", "test.reconfigure", _paths(tmp_path), config)
+    first = configure_logging("reconfigure", "test.reconfigure", _run_dir(tmp_path), config)
     logger = logging.getLogger("test.reconfigure")
     old_file_handler = next(
         handler
@@ -131,7 +115,7 @@ def test_reconfigure_replaces_owned_handlers_without_duplicates(
         if getattr(handler, "_platform_logging_kind", None) == "file"
     )
 
-    second = configure_logging("reconfigure", "test.reconfigure", _paths(tmp_path), config)
+    second = configure_logging("reconfigure", "test.reconfigure", _run_dir(tmp_path), config)
     owned_kinds: List[str] = [
         _handler_kind(handler)
         for handler in logger.handlers
@@ -145,7 +129,7 @@ def test_reconfigure_replaces_owned_handlers_without_duplicates(
     log_event(logger, logging.INFO, "configured_once")
     _flush("test.reconfigure")
 
-    assert first.log_file.read_text(encoding="utf-8") == ""
+    assert first.log_file == second.log_file
     assert second.log_file.read_text(encoding="utf-8").count("configured_once") == 1
 
 
@@ -155,8 +139,8 @@ def test_foreign_handlers_are_preserved_during_reconfigure(tmp_path: Path) -> No
     logger.addHandler(foreign_handler)
 
     try:
-        configure_logging("foreign_handler", logger.name, _paths(tmp_path), _config())
-        configure_logging("foreign_handler", logger.name, _paths(tmp_path), _config())
+        configure_logging("foreign_handler", logger.name, _run_dir(tmp_path), _config())
+        configure_logging("foreign_handler", logger.name, _run_dir(tmp_path), _config())
 
         assert foreign_handler in logger.handlers
     finally:
@@ -165,7 +149,7 @@ def test_foreign_handlers_are_preserved_during_reconfigure(tmp_path: Path) -> No
 
 
 def test_child_namespace_is_logged_but_external_namespace_is_isolated(tmp_path: Path) -> None:
-    session = configure_logging("namespace", "test.namespace", _paths(tmp_path), _config())
+    session = configure_logging("namespace", "test.namespace", _run_dir(tmp_path), _config())
 
     log_event(logging.getLogger("test.namespace.dispatch"), logging.INFO, "child_event")
     logging.getLogger("some_external_library").warning("external_event")
@@ -183,18 +167,18 @@ def test_root_logger_is_not_reconfigured(tmp_path: Path) -> None:
     original_handlers = list(root_logger.handlers)
     original_level = root_logger.level
 
-    configure_logging("root_isolation", "test.root_isolation", _paths(tmp_path), _config())
+    configure_logging("root_isolation", "test.root_isolation", _run_dir(tmp_path), _config())
 
     assert root_logger.handlers == original_handlers
     assert root_logger.level == original_level
 
 
 def test_logger_exception_keeps_traceback(tmp_path: Path) -> None:
-    session = configure_logging("traceback", "test.traceback", _paths(tmp_path), _config())
+    session = configure_logging("traceback", "test.traceback", _run_dir(tmp_path), _config())
     logger = logging.getLogger("test.traceback")
 
     try:
-        raise ValueError("broken payload")
+        raise ValueError("ошибка данных")
     except ValueError:
         logger.exception("request_failed")
     _flush("test.traceback")
@@ -202,7 +186,7 @@ def test_logger_exception_keeps_traceback(tmp_path: Path) -> None:
     content = session.log_file.read_text(encoding="utf-8")
     assert "request_failed" in content
     assert "Traceback (most recent call last):" in content
-    assert "ValueError: broken payload" in content
+    assert "ValueError: ошибка данных" in content
 
 
 @pytest.mark.parametrize("level", ["", "VERBOSE", "not-a-level"])
@@ -246,7 +230,7 @@ def test_negative_backup_count_is_rejected() -> None:
 )
 def test_unsafe_service_name_is_rejected(tmp_path: Path, service_name: str) -> None:
     with pytest.raises(ValueError, match="service_name"):
-        configure_logging(service_name, "test.validation", _paths(tmp_path), _config())
+        configure_logging(service_name, "test.validation", _run_dir(tmp_path), _config())
 
 
 @pytest.mark.parametrize(
@@ -255,4 +239,33 @@ def test_unsafe_service_name_is_rejected(tmp_path: Path, service_name: str) -> N
 )
 def test_unsafe_logger_name_is_rejected(tmp_path: Path, logger_name: str) -> None:
     with pytest.raises(ValueError, match="logger_name"):
-        configure_logging("validation", logger_name, _paths(tmp_path), _config())
+        configure_logging("validation", logger_name, _run_dir(tmp_path), _config())
+
+
+
+def test_reconfigure_moves_owned_handlers_to_supplied_directory(tmp_path: Path) -> None:
+    first_dir, second_dir = tmp_path / "first", tmp_path / "second"
+    first_dir.mkdir()
+    second_dir.mkdir()
+    first = configure_logging("service", "test.move", first_dir, _config())
+    logger = logging.getLogger("test.move")
+    logger.info("Первый запуск")
+    second = configure_logging("service", "test.move", second_dir, _config())
+    logger.info("Второй запуск")
+    _flush(logger.name)
+    assert "Первый запуск" in first.log_file.read_text(encoding="utf-8")
+    assert "Второй запуск" not in first.log_file.read_text(encoding="utf-8")
+    assert "Второй запуск" in second.log_file.read_text(encoding="utf-8")
+    assert "Первый запуск" not in second.log_file.read_text(encoding="utf-8")
+
+
+def test_invalid_reconfigure_preserves_working_handlers(tmp_path: Path) -> None:
+    session = configure_logging("service", "test.preserve", tmp_path, _config())
+    logger = logging.getLogger("test.preserve")
+    handlers = list(logger.handlers)
+    with pytest.raises(ValueError, match="run_dir"):
+        configure_logging("service", logger.name, tmp_path / "missing", _config())
+    assert logger.handlers == handlers
+    logger.info("Запись после ошибки настройки")
+    _flush(logger.name)
+    assert "Запись после ошибки настройки" in session.log_file.read_text(encoding="utf-8")

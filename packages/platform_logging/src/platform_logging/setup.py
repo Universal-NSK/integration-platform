@@ -2,12 +2,9 @@ import logging
 import re
 import threading
 from dataclasses import dataclass
-from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import List
-
-from runtime_files import RuntimePaths
 
 from platform_logging.config import LoggingConfig, resolve_level
 from platform_logging.formatter import StructuredFormatter
@@ -29,7 +26,7 @@ _CONFIGURE_LOCK = threading.RLock()
 
 @dataclass(frozen=True)
 class LoggingSession:
-    """Immutable description of one configured logging session."""
+    """Неизменяемое описание настроенной сессии логирования."""
 
     service_name: str
     logger_name: str
@@ -37,42 +34,22 @@ class LoggingSession:
     config: LoggingConfig
 
 
-def _current_time() -> datetime:
-    return datetime.now()
-
-
 def _validate_service_name(service_name: object) -> None:
     if not isinstance(service_name, str) or not _SAFE_SERVICE_NAME.fullmatch(service_name):
-        raise ValueError("service_name must be a safe file and directory segment")
+        raise ValueError("service_name должен быть безопасным сегментом имени файла")
     if service_name.endswith("."):
-        raise ValueError("service_name must not end with a dot")
+        raise ValueError("service_name не должен оканчиваться точкой")
 
     reserved_candidate = service_name.split(".", 1)[0].upper()
     if reserved_candidate in _WINDOWS_RESERVED_NAMES:
-        raise ValueError("service_name is reserved on Windows")
+        raise ValueError("service_name зарезервирован в Windows")
 
 
 def _validate_logger_name(logger_name: object) -> None:
     if not isinstance(logger_name, str) or not logger_name:
-        raise ValueError("logger_name must be a non-empty logger namespace")
+        raise ValueError("logger_name должен быть непустым пространством имён логгера")
     if any(not _SAFE_LOGGER_SEGMENT.fullmatch(segment) for segment in logger_name.split(".")):
-        raise ValueError("logger_name must contain safe dot-separated namespace segments")
-
-
-def _reserve_log_file(log_dir: Path, service_name: str, started_at: datetime) -> Path:
-    timestamp = started_at.strftime("%Y-%m-%d_%H-%M-%S")
-    index = 1
-
-    while True:
-        suffix = "" if index == 1 else f"_{index}"
-        candidate = log_dir / f"{service_name}_{timestamp}{suffix}.log"
-        try:
-            with candidate.open("x", encoding="utf-8"):
-                pass
-        except FileExistsError:
-            index += 1
-            continue
-        return candidate
+        raise ValueError("logger_name должен содержать безопасные сегменты, разделённые точками")
 
 
 def _mark_handler(handler: logging.Handler, kind: str) -> None:
@@ -119,22 +96,22 @@ def _build_handlers(log_file: Path, config: LoggingConfig) -> List[logging.Handl
 def configure_logging(
     service_name: str,
     logger_name: str,
-    paths: RuntimePaths,
+    run_dir: Path,
     config: LoggingConfig,
 ) -> LoggingSession:
-    """Configure one service namespace without changing the root logger.
+    """Настроить пространство логгера в готовом каталоге запуска.
 
-    Reconfiguration creates a new collision-safe session file, atomically replaces
-    only handlers owned by this package, and closes the replaced handlers.
+    Повторная настройка заменяет и закрывает только собственные обработчики.
+    Корневой логгер и сторонние обработчики остаются без изменений.
     """
     _validate_service_name(service_name)
     _validate_logger_name(logger_name)
     level = resolve_level(config.level)
 
     with _CONFIGURE_LOCK:
-        log_dir = paths.program_data_dir("logs") / service_name
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = _reserve_log_file(log_dir, service_name, _current_time())
+        if not run_dir.is_dir():
+            raise ValueError("run_dir должен быть существующим каталогом")
+        log_file = run_dir / f"{service_name}.log"
         new_handlers = _build_handlers(log_file, config)
 
         logger = logging.getLogger(logger_name)

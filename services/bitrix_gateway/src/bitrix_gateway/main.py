@@ -42,12 +42,14 @@ async def _run() -> None:
         ),
     )
 
+    run_dir = paths.create_run_dir("bitrix_gateway")
+
     # ВАЖНО:
     # runtime создаётся уже внутри активного event loop.
     runtime = build_runtime(
         settings=settings,
         secrets=secrets,
-        paths=paths,
+        run_dir=run_dir,
     )
 
     app = create_app(runtime)

@@ -73,7 +73,7 @@ def local_gateway(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[L
     session = configure_logging(
         service_name="bitrix_gateway",
         logger_name="bitrix_gateway",
-        paths=paths,
+        run_dir=paths.create_run_dir("bitrix_gateway"),
         config=LoggingConfig(
             level="ERROR", console=False, log_payloads=False, max_bytes=100000, backup_count=1
         ),

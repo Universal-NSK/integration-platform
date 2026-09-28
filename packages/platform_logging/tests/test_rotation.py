@@ -17,7 +17,7 @@ def test_size_rotation_creates_and_limits_backups(tmp_path: Path) -> None:
         max_bytes=220,
         backup_count=2,
     )
-    session = configure_logging("rotation", "test.rotation", paths, config)
+    session = configure_logging("rotation", "test.rotation", paths.create_run_dir("test_service"), config)
     logger = logging.getLogger("test.rotation")
 
     for index in range(12):

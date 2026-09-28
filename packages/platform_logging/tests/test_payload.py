@@ -23,7 +23,7 @@ def _configure(tmp_path: Path, *, log_payloads: bool = True) -> Path:
         max_bytes=100_000,
         backup_count=1,
     )
-    return configure_logging("payload", "test.payload", paths, config).log_file
+    return configure_logging("payload", "test.payload", paths.create_run_dir("test_service"), config).log_file
 
 
 def _flush() -> None:

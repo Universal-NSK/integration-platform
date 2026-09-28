@@ -119,7 +119,7 @@ def test_program_data_file_uses_windows_programdata(
 def test_relative_repo_root_is_rejected() -> None:
     with pytest.raises(
         ValueError,
-        match="repo_root must be an absolute path",
+        match="repo_root должен быть абсолютным путём",
     ):
         RuntimePaths(
             repo_root=Path("repository"),

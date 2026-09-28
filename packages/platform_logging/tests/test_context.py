@@ -17,7 +17,7 @@ def test_context_is_bound_per_adapter_and_children_share_service_file(tmp_path: 
         max_bytes=100_000,
         backup_count=1,
     )
-    session = configure_logging("context", "test.context", paths, config)
+    session = configure_logging("context", "test.context", paths.create_run_dir("test_service"), config)
     first = with_context(
         logging.getLogger("test.context.dispatch"),
         job_id="job-a",

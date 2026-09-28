@@ -1,47 +1,38 @@
 # platform-logging
 
-`platform_logging` configures Python's standard `logging` package for one Integration
-Platform service namespace. It always writes a UTF-8 rotating file under
-`RuntimePaths.program_data_dir("logs") / service_name` and can add the same structured
-formatter to the console.
+`platform_logging` настраивает стандартный `logging` для одного пространства имён.
+Вызывающая сторона создаёт каталог запуска и передаёт его в логгер:
 
 ```python
-import logging
+from pathlib import Path
 
-from platform_logging import (
-    LoggingConfig,
-    configure_logging,
-    log_event,
-    log_payload,
-    with_context,
-)
+from platform_logging import LoggingConfig, configure_logging
+from runtime_files import RuntimePaths
 
-config = LoggingConfig(
-    level="INFO",
-    console=True,
-    log_payloads=True,
-    max_bytes=10_000_000,
-    backup_count=5,
-)
-session = configure_logging("bitrix_gateway", "bitrix_gateway", paths, config)
-
-logger = logging.getLogger("bitrix_gateway.dispatch")
-job_logger = with_context(logger, job_id="a812", method="crm.company.add")
-log_event(job_logger, logging.INFO, "job_started", queue_wait="6ms", queue_size=1)
-log_payload(
-    job_logger,
-    logging.INFO,
-    "request_payload",
-    payload,
-    enabled=session.config.log_payloads,
+paths = RuntimePaths.from_project(start=Path(__file__))
+run_dir = paths.create_run_dir("bitrix_gateway")
+session = configure_logging(
+    service_name="bitrix_gateway",
+    logger_name="bitrix_gateway",
+    run_dir=run_dir,
+    config=LoggingConfig(
+        level="INFO", console=True, log_payloads=False,
+        max_bytes=10_000_000, backup_count=5,
+    ),
 )
 ```
 
-The package configures only the requested logger namespace with `propagate = False`;
-it does not configure the root logger or capture unrelated libraries. Reconfiguring the
-same namespace creates a fresh collision-safe session file and replaces and closes only
-handlers previously created by `platform_logging`.
+`run_dir` должен существовать и быть каталогом. Логгер пишет UTF-8 в
+`run_dir / "bitrix_gateway.log"`; ротация создаёт рядом `.log.1`, `.log.2` и т. д.
+Логгер не выбирает ProgramData и не создаёт каталог запуска.
+За timestamp `YYYY-MM-DD_HH-MM-SS` и коллизии `_2`, `_3` отвечает `RuntimePaths`.
 
-Payload and response logging is explicit and preserves complete JSON data. Callers may
-log business payloads and responses, but must never pass webhook URLs, secret
-configuration, or full Bitrix request URLs to any logging helper.
+Повторная настройка заменяет и закрывает только обработчики `platform_logging`.
+При передаче того же каталога запись продолжается в том же файле.
+Сторонние обработчики и корневой логгер сохраняются; `propagate = False`
+изолирует выбранное пространство имён. Консоль использует тот же StructuredFormatter.
+
+`log_event`, `with_context` и `log_payload` сохраняют прежние API.
+Логирование payload включается явно; нельзя передавать секреты, webhook URL
+или полные URL запросов Bitrix. Диагностические snapshots `RunArtifactStore`
+сохраняются отдельно и автоматически в лог не попадают.
