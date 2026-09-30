@@ -13,4 +13,4 @@ gateway_url = "http://127.0.0.1:8765"
 timeout = 180.0
 
 [extract.nashdom]
-objects_to_parse_count = 35   # Кол-во объектов КАЖДОГО РЕГИОНА для парсинга
+objects_to_parse_count = 2   # Кол-во объектов КАЖДОГО РЕГИОНА для парсинга

@@ -77,7 +77,6 @@ def context() -> CrmContext:
                 ),
                 DeveloperFieldsBindings(
                     "contact",
-                    "developer_source",
                     "company_title",
                     "company_manager",
                     "company_type",
@@ -341,7 +340,6 @@ def test_branch_payloads_bindings_and_managers() -> None:
             "company_type": "TYPE",
             "sector": "SECTOR",
             "contact": "Contact person",
-            "developer_source": 10,
             "multi": [
                 {"use": "BUSINESS", "channel": channel, "text": value}
                 for channel, value in (
@@ -673,7 +671,14 @@ def test_representative_local_samples() -> None:
             CrmEntityTypeId(**raw["structure"]["entity_types"]),
             CrmEntityFields(
                 LeadFieldsBindings(**ef["lead"]),
-                DeveloperFieldsBindings(**ef["developer"]),
+                # Исторический локальный snapshot может содержать удалённый binding.
+                DeveloperFieldsBindings(
+                    **{
+                        key: value
+                        for key, value in ef["developer"].items()
+                        if key != "source_developer_id"
+                    }
+                ),
                 CompanyGroupFieldsBindings(**ef["company_group"]),
                 RequisiteFieldsBindings(**ef["requisite"]),
                 AddressFieldsBindings(**ef["address"]),

@@ -12,6 +12,7 @@ from nashdom_sync.bitrix_crm.exceptions import (
 )
 from nashdom_sync.contracts.crm import (
     CrmEmployee,
+    DeveloperFieldsBindings,
     ExistingCrmCompanyGroup,
     ExistingCrmDeveloper,
     ExistingCrmLead,
@@ -176,6 +177,59 @@ def test_resolver_errors(
     with pytest.raises(error):
         setup[0]._resolve_fields(raw, {"binding": FieldSpec("Поле", fallback)})
     assert not caplog.records
+
+
+@pytest.mark.parametrize("legacy_present", [False, True])
+def test_provider_developer_fields_without_legacy_dependency(
+    setup: Tuple[CrmProvider, Mock, Mock], legacy_present: bool
+) -> None:
+    provider, client, _ = setup
+    # Метаданные заданы независимо от DEVELOPER_FIELDS: старое поле необязательно.
+    company_fields: Dict[str, Any] = {"contact": {"title": "ЛПР"}}
+    if legacy_present:
+        company_fields["legacy"] = {
+            "title": "ID компании (Из источника)",
+            "upperName": "UF_CRM_1777639761",
+        }
+
+    def get_fields(entity: int) -> Dict[str, Any]:
+        return {
+            1: metadata(LEAD_FIELDS),
+            4: company_fields,
+            1050: metadata(COMPANY_GROUP_FIELDS),
+        }[entity]
+
+    client.get_item_fields.side_effect = get_fields
+
+    result = provider.provide(region())
+
+    assert result.structure.entity_fields.developer == DeveloperFieldsBindings(
+        contact_name="contact"
+    )
+    assert asdict(result.structure.entity_fields.developer) == {
+        "contact_name": "contact",
+        "title": "title",
+        "assigned_by_id": "assignedById",
+        "company_type": "typeId",
+        "industry": "industry",
+        "multifield": "fm",
+    }
+    assert result.existing.developers == (ExistingCrmDeveloper("00123", 14),)
+
+
+def test_developer_contact_name_remains_required(setup: Tuple[CrmProvider, Mock, Mock]) -> None:
+    provider, client, _ = setup
+
+    def get_fields(entity: int) -> Dict[str, Any]:
+        return {
+            1: metadata(LEAD_FIELDS),
+            4: {},
+            1050: metadata(COMPANY_GROUP_FIELDS),
+        }[entity]
+
+    client.get_item_fields.side_effect = get_fields
+    with pytest.raises(CrmMissingSemanticError, match="ЛПР"):
+        provider.provide(region())
 
 
 def test_bindings_and_defaults(setup: Tuple[CrmProvider, Mock, Mock]) -> None:

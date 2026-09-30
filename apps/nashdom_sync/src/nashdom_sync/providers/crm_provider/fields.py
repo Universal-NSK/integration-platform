@@ -20,7 +20,6 @@ LEAD_FIELDS: Dict[str, FieldSpec] = {
 
 DEVELOPER_FIELDS: Dict[str, FieldSpec] = {
     "contact_name": FieldSpec("ЛПР", "UF_CRM_1754447476814"),
-    "source_developer_id": FieldSpec("ID компании (Из источника)", "UF_CRM_1777639761"),
 }
 
 COMPANY_GROUP_FIELDS: Dict[str, FieldSpec] = {

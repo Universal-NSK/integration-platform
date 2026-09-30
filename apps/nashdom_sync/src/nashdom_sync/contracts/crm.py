@@ -21,7 +21,6 @@ class LeadFieldsBindings:
 @dataclass(frozen=True)
 class DeveloperFieldsBindings:
     contact_name: str
-    source_developer_id: str
     title: str = "title"
     assigned_by_id: str = "assignedById"
     company_type: str = "typeId"

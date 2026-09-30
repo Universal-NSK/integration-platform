@@ -196,7 +196,6 @@ class SyncPlanTransformer:
                             fields.company_type: refs.developer_company_type_id,
                             fields.industry: refs.developer_industry_id,
                             fields.contact_name: developer.contact_name,
-                            fields.source_developer_id: developer.id,
                             fields.multifield: multifields,
                         },
                     ),
