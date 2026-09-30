@@ -1,4 +1,4 @@
-"""Последовательный запуск синхронизации до построения плана включительно."""
+"""Последовательный запуск синхронизации с выполнением и сохранением результата Load."""
 
 import logging
 from contextlib import suppress
@@ -9,6 +9,7 @@ from platform_logging import LoggingConfig, configure_logging, log_event
 from runtime_files import RuntimePaths
 
 from nashdom_sync.extract import ExtractService
+from nashdom_sync.load import LoadIncompleteError, LoadService
 from nashdom_sync.providers.browser_provider import BrowserProvider
 from nashdom_sync.providers.crm_provider import CrmProvider
 from nashdom_sync.providers.settings_provider import SettingsProvider
@@ -28,7 +29,7 @@ class SyncOrchestrator:
     """Владеет компонентами, браузером и артефактами одного запуска."""
 
     def run(self, paths: RuntimePaths) -> None:
-        """Последовательно получить данные и сохранить план без выполнения Load."""
+        """Последовательно получить данные, выполнить план и сохранить результаты."""
         overall_started = perf_counter()
         run_dir = paths.create_run_dir("nashdom_sync")
         artifacts = RunArtifactStore.start(run_dir)
@@ -77,6 +78,7 @@ class SyncOrchestrator:
             emit("sync_started", overall_started)
             emit("stage_started", stage_started)
             crm_provider = CrmProvider(settings.bitrix)
+            load_service = LoadService(settings.bitrix)
             emit("stage_completed", stage_started)
 
             current_stage = RunStage.CRM_CONTEXT
@@ -112,6 +114,15 @@ class SyncOrchestrator:
                 extract_result, crm_context, settings.region
             )
             artifacts.save_sync_plan(transform_result.plan)
+            emit("stage_completed", stage_started)
+            current_stage = RunStage.LOAD
+            stage_started = perf_counter()
+            artifacts.mark_stage(current_stage)
+            emit("stage_started", stage_started)
+            load_result = load_service.load(transform_result.plan)
+            artifacts.save_load_result(load_result)
+            if not load_result.is_successful:
+                raise LoadIncompleteError("Не все операции плана синхронизации выполнены успешно")
             emit("stage_completed", stage_started)
             artifacts.mark_completed()
             emit("sync_completed", overall_started)

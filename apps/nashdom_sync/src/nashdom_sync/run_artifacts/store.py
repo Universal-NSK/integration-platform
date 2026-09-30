@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional, Type, TypeVar, cast
 
 from nashdom_sync.contracts.crm import CrmContext
 from nashdom_sync.contracts.extract import ExtractResult
+from nashdom_sync.contracts.load import LoadResult
 from nashdom_sync.contracts.transform import SyncPlan
 from nashdom_sync.run_artifacts.contracts import RunManifest, RunStage, RunStatus
 from nashdom_sync.run_artifacts.exceptions import RunArtifactError
@@ -78,6 +79,12 @@ class RunArtifactStore:
 
     def load_sync_plan(self) -> SyncPlan:
         return self._load("sync_plan.json", SyncPlan)
+
+    def save_load_result(self, result: LoadResult) -> None:
+        self._save("load_result.json", result, LoadResult)
+
+    def load_load_result(self) -> LoadResult:
+        return self._load("load_result.json", LoadResult)
 
     def mark_stage(self, stage: RunStage) -> None:
         self._update_manifest(replace(self._manifest, stage=stage))

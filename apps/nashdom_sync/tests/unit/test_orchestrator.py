@@ -11,9 +11,18 @@ import pytest
 import tomli
 from nashdom_sync import main as main_module
 from nashdom_sync import orchestrator as module
-from nashdom_sync.contracts import SyncSettings
-from nashdom_sync.contracts.transform import SyncPlan, TransformResult
+from nashdom_sync.bitrix_crm import BitrixGatewayError, BitrixRequestFailedError, ClientBitrixCRM
+from nashdom_sync.contracts import LoadResult, OperationResult, OperationStatus, SyncSettings
+from nashdom_sync.contracts.transform import (
+    AddItemCommand,
+    PlannedOperation,
+    RuntimeBinding,
+    SyncPlan,
+    TransformResult,
+)
 from nashdom_sync.extract import ExtractError
+from nashdom_sync.load import LoadIncompleteError, LoadService
+from nashdom_sync.load import service as load_module
 from nashdom_sync.providers.browser_provider import (
     BrowserBinaryNotFoundError,
     BrowserLaunchError,
@@ -83,6 +92,7 @@ def run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Run]:
             "ExtractService",
             "TransformService",
             "CrmProvider",
+            "LoadService",
         )
     }
     for name, constructor in constructors.items():
@@ -93,6 +103,7 @@ def run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Run]:
     constructors["TransformService"].return_value.transform.return_value = TransformResult(
         SyncPlan(())
     )
+    constructors["LoadService"].return_value.load.return_value = LoadResult(())
     driver = constructors["BrowserProvider"].return_value.provide.return_value
     store = Mock()
     start = RunArtifactStore.start
@@ -106,6 +117,7 @@ def run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Run]:
             "save_crm_context",
             "save_extract_result",
             "save_sync_plan",
+            "save_load_result",
         ):
             getattr(store, name).side_effect = getattr(real, name)
         return store
@@ -128,6 +140,7 @@ def run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Run]:
                 "CRM_CONTEXT": "crm_context.json",
                 "EXTRACT": "extract_result.json",
                 "TRANSFORM": "sync_plan.json",
+                "LOAD": "load_result.json",
             }.get(stage)
             if filename is not None:
                 assert (result.directory / filename).is_file()
@@ -172,26 +185,32 @@ def test_happy_path(run: Run) -> None:
         "crm_context.json",
         "extract_result.json",
         "sync_plan.json",
+        "load_result.json",
     }
     assert run.manifest()["status"] == "COMPLETED"
-    assert run.manifest()["stage"] == "TRANSFORM"
+    assert run.manifest()["stage"] == "LOAD"
     assert run.manifest()["error_type"] is None
     assert run.manifest()["finished_at"] is not None
     expected = [("sync_started", "INITIALIZATION")]
-    for stage in ("INITIALIZATION", "CRM_CONTEXT", "EXTRACT", "TRANSFORM"):
+    for stage in ("INITIALIZATION", "CRM_CONTEXT", "EXTRACT", "TRANSFORM", "LOAD"):
         expected.extend([("stage_started", stage), ("stage_completed", stage)])
-    expected.append(("sync_completed", "TRANSFORM"))
+    expected.append(("sync_completed", "LOAD"))
     assert run.events == expected
     assert [call.args[0] for call in run.store.mark_stage.call_args_list] == [
         RunStage.CRM_CONTEXT,
         RunStage.EXTRACT,
         RunStage.TRANSFORM,
+        RunStage.LOAD,
     ]
     run.driver.quit.assert_called_once_with()
     for constructor in run.constructors.values():
         constructor.assert_called_once()
     run.constructors["SettingsProvider"].assert_called_once_with(run.paths)
     run.constructors["CrmProvider"].assert_called_once_with(run.settings.bitrix)
+    run.constructors["LoadService"].assert_called_once_with(run.settings.bitrix)
+    plan = run.constructors["TransformService"].return_value.transform.return_value.plan
+    assert run.constructors["LoadService"].return_value.load.call_args.args[0] is plan
+    run.store.load_sync_plan.assert_not_called()
     run.constructors["CrmProvider"].return_value.provide.assert_called_once_with(
         run.settings.region
     )
@@ -242,7 +261,14 @@ def test_settings_failure(run: Run, error: Exception) -> None:
 
 @pytest.mark.parametrize(
     "component",
-    ["SettingsProvider", "BrowserProvider", "ExtractService", "TransformService", "CrmProvider"],
+    [
+        "SettingsProvider",
+        "BrowserProvider",
+        "ExtractService",
+        "TransformService",
+        "CrmProvider",
+        "LoadService",
+    ],
 )
 def test_constructor_failure_is_initialization(run: Run, component: str) -> None:
     error = RuntimeError("Ошибка конструктора")
@@ -278,13 +304,14 @@ def test_stage_failure(run: Run, component: str, method: str, stage: str, error:
     assert caught.value is error
     assert_failed(run, stage, error)
     assert ("stage_completed", stage) not in run.events
-    if stage != "TRANSFORM":
+    if stage not in ("TRANSFORM", "LOAD"):
         run.constructors["TransformService"].return_value.transform.assert_not_called()
     if component in ("CrmProvider", "BrowserProvider"):
         run.constructors["ExtractService"].return_value.extract.assert_not_called()
         run.driver.quit.assert_not_called()
     else:
         run.driver.quit.assert_called_once_with()
+    run.constructors["LoadService"].return_value.load.assert_not_called()
     assert not (run.directory / "sync_plan.json").exists()
     assert "sync_failed" in run.log()
     assert "exception_type=" + type(error).__name__ in run.log()
@@ -297,7 +324,8 @@ def test_stage_failure(run: Run, component: str, method: str, stage: str, error:
         ("save_crm_context", "CRM_CONTEXT"),
         ("save_extract_result", "EXTRACT"),
         ("save_sync_plan", "TRANSFORM"),
-        ("mark_completed", "TRANSFORM"),
+        ("save_load_result", "LOAD"),
+        ("mark_completed", "LOAD"),
     ],
 )
 def test_artifact_failure(
@@ -311,9 +339,13 @@ def test_artifact_failure(
     assert_failed(run, stage, error)
     if method != "mark_completed":
         assert ("stage_completed", stage) not in run.events
+    if method != "mark_completed":
+        run.store.mark_completed.assert_not_called()
+    if stage != "LOAD":
+        run.constructors["LoadService"].return_value.load.assert_not_called()
     if stage == "CRM_CONTEXT":
         run.constructors["BrowserProvider"].return_value.provide.assert_not_called()
-    if stage != "TRANSFORM":
+    if stage not in ("TRANSFORM", "LOAD"):
         run.constructors["TransformService"].return_value.transform.assert_not_called()
 
 
@@ -374,7 +406,9 @@ def test_logging_setup_failure(run: Run) -> None:
     run.constructors["CrmProvider"].assert_not_called()
 
 
-@pytest.mark.parametrize("stage", [RunStage.CRM_CONTEXT, RunStage.EXTRACT, RunStage.TRANSFORM])
+@pytest.mark.parametrize(
+    "stage", [RunStage.CRM_CONTEXT, RunStage.EXTRACT, RunStage.TRANSFORM, RunStage.LOAD]
+)
 def test_mark_stage_failure(run: Run, monkeypatch: pytest.MonkeyPatch, stage: RunStage) -> None:
     original = RunArtifactStore.mark_stage
     error = RunArtifactError("Ошибка перехода стадии")
@@ -455,3 +489,124 @@ def test_regular_log_failure_is_primary(run: Run, monkeypatch: pytest.MonkeyPatc
     assert caught.value is error
     assert_failed(run, "CRM_CONTEXT", error)
     run.constructors["BrowserProvider"].return_value.provide.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "status", [OperationStatus.FAILED, OperationStatus.UNKNOWN, OperationStatus.BLOCKED]
+)
+def test_partial_load_saved_before_failure(run: Run, status: OperationStatus) -> None:
+    result = LoadResult((OperationResult("operation", status),))
+    run.constructors["LoadService"].return_value.load.return_value = result
+    with pytest.raises(LoadIncompleteError) as caught:
+        run.execute()
+    assert_failed(run, "LOAD", caught.value)
+    store = RunArtifactStore(run.directory, Mock())
+    assert store.load_load_result() == result
+    assert run.store.save_load_result.call_args.args[0] is result
+    names = [item[0] for item in run.store.mock_calls]
+    assert names.index("save_load_result") < names.index("mark_failed")
+    run.store.mark_completed.assert_not_called()
+    assert ("stage_completed", "LOAD") not in run.events
+    assert "Не все операции плана синхронизации выполнены успешно" == str(caught.value)
+
+
+def test_load_infrastructure_failure(run: Run) -> None:
+    error = BitrixGatewayError("Секретный payload")
+    run.constructors["LoadService"].return_value.load.side_effect = error
+    with pytest.raises(BitrixGatewayError) as caught:
+        run.execute()
+    assert caught.value is error
+    assert_failed(run, "LOAD", error)
+    assert not (run.directory / "load_result.json").exists()
+    run.store.mark_completed.assert_not_called()
+    assert "Секретный payload" not in run.log()
+
+
+def test_load_constructed_in_initialization_and_called_only_in_load(run: Run) -> None:
+    def create(settings: Any) -> Mock:
+        assert run.manifest()["stage"] == "INITIALIZATION"
+        assert settings is run.settings.bitrix
+        return service
+
+    def execute(plan: SyncPlan) -> LoadResult:
+        assert run.manifest()["stage"] == "LOAD"
+        assert (run.directory / "sync_plan.json").is_file()
+        return LoadResult(())
+
+    service = run.constructors["LoadService"].return_value
+    service.load.side_effect = execute
+    run.constructors["LoadService"].side_effect = create
+    run.execute()
+
+
+@pytest.mark.parametrize("outcome", ["empty", "success", "partial", "infrastructure"])
+def test_orchestrator_with_real_load_and_fake_crm(
+    run: Run, monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    monkeypatch.setattr(module, "LoadService", LoadService)
+    client = Mock(spec=ClientBitrixCRM)
+    monkeypatch.setattr(load_module, "ClientBitrixCRM", Mock(return_value=client))
+    secret = "Секретный адрес и телефон"
+    command = AddItemCommand(4, {"TITLE": secret})
+    plan = (
+        SyncPlan(())
+        if outcome == "empty"
+        else SyncPlan(
+            (
+                PlannedOperation("first", command),
+                PlannedOperation("dependent", command, (RuntimeBinding("OWNER", "first"),)),
+                PlannedOperation("independent", command),
+            )
+        )
+    )
+    run.constructors["TransformService"].return_value.transform.return_value = TransformResult(plan)
+    if outcome == "partial":
+        client.add_item.side_effect = [BitrixRequestFailedError(secret), 303]
+    elif outcome == "infrastructure":
+        client.add_item.side_effect = BitrixGatewayError(secret)
+    else:
+        client.add_item.side_effect = [101, 202, 303]
+    if outcome in ("empty", "success"):
+        run.execute()
+        assert run.manifest()["status"] == "COMPLETED"
+    else:
+        expected = LoadIncompleteError if outcome == "partial" else BitrixGatewayError
+        with pytest.raises(expected) as caught:
+            run.execute()
+        assert_failed(run, "LOAD", caught.value)
+        assert secret not in str(caught.value) if outcome == "partial" else True
+    assert run.manifest()["stage"] == "LOAD"
+    assert secret not in run.log()
+    client.close.assert_called_once_with()
+    if outcome == "infrastructure":
+        assert not (run.directory / "load_result.json").exists()
+        client.add_item.assert_called_once()
+    else:
+        saved = RunArtifactStore(run.directory, Mock()).load_load_result()
+        assert tuple(r.operation_id for r in saved.operations) == tuple(
+            op.operation_id for op in plan.operations
+        )
+        assert saved.is_successful is (outcome != "partial")
+        if outcome == "partial":
+            assert saved.operations[1].blocked_by == ("first",)
+            assert client.add_item.call_count == 2
+        elif outcome == "empty":
+            client.add_item.assert_not_called()
+        else:
+            assert saved.operations[1].crm_id == 202
+            assert client.add_item.call_args_list[1].args == (4, {"TITLE": secret, "OWNER": 101})
+
+
+def test_load_result_save_failure_takes_priority_over_partial_result(
+    run: Run, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run.constructors["LoadService"].return_value.load.return_value = LoadResult(
+        (OperationResult("failed", OperationStatus.FAILED),)
+    )
+    error = RunArtifactError("Ошибка сохранения результата")
+    monkeypatch.setattr(RunArtifactStore, "save_load_result", Mock(side_effect=error))
+    with pytest.raises(RunArtifactError) as caught:
+        run.execute()
+    assert caught.value is error
+    assert_failed(run, "LOAD", error)
+    run.store.mark_completed.assert_not_called()

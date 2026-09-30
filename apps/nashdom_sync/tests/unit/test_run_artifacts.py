@@ -15,6 +15,9 @@ from nashdom_sync.contracts import (
     ExistingCrmLead,
     ExtractedObjectTypeEnum,
     ExtractResult,
+    LoadResult,
+    OperationResult,
+    OperationStatus,
 )
 from nashdom_sync.contracts.transform import SyncPlan
 from nashdom_sync.run_artifacts import RunArtifactError, RunArtifactStore, RunStage, RunStatus
@@ -391,3 +394,73 @@ def test_other_files_do_not_prevent_start(tmp_path: Path) -> None:
     assert _json(tmp_path / "run.json")["status"] == "RUNNING"
     assert other_file.read_bytes() == before
     assert {path.name for path in tmp_path.iterdir()} == {"some_file.txt", "run.json"}
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_load_result_round_trip(tmp_path: Path, empty: bool) -> None:
+    result = (
+        LoadResult(())
+        if empty
+        else LoadResult(
+            (
+                OperationResult("item", OperationStatus.SUCCESS, 123),
+                OperationResult("address", OperationStatus.SUCCESS),
+                OperationResult(
+                    "failed", OperationStatus.FAILED, error_type="BitrixRequestFailedError"
+                ),
+                OperationResult(
+                    "unknown", OperationStatus.UNKNOWN, error_type="BitrixRequestUnknownError"
+                ),
+                OperationResult(
+                    "blocked", OperationStatus.BLOCKED, blocked_by=("unknown", "failed")
+                ),
+            )
+        )
+    )
+    store = RunArtifactStore.start(tmp_path)
+    store.save_load_result(result)
+    restored = store.load_load_result()
+    assert restored == result
+    assert isinstance(restored.operations, tuple)
+    for operation in restored.operations:
+        assert isinstance(operation.status, OperationStatus)
+        assert isinstance(operation.blocked_by, tuple)
+    assert _json(tmp_path / "load_result.json")["schema_version"] == 1
+    assert restored.is_successful is empty
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "{",
+        "null",
+        '{"schema_version": 2, "data": {"operations": []}}',
+        '{"schema_version": 1, "data": {"operations": {}}}',
+        '{"schema_version": 1, "data": {"operations": [{"operation_id": "a"}]}}',
+    ],
+)
+def test_corrupt_load_result(tmp_path: Path, raw: str) -> None:
+    store = RunArtifactStore.start(tmp_path)
+    (tmp_path / "load_result.json").write_text(raw, encoding="utf-8")
+    with pytest.raises(RunArtifactError, match="load_result.json"):
+        store.load_load_result()
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("status", "PENDING"),
+        ("crm_id", "123"),
+        ("blocked_by", [1]),
+        ("error_type", 4),
+    ],
+)
+def test_load_result_field_corruption(tmp_path: Path, field: str, value: Any) -> None:
+    store = RunArtifactStore.start(tmp_path)
+    store.save_load_result(LoadResult((OperationResult("a", OperationStatus.SUCCESS, 1),)))
+    path = tmp_path / "load_result.json"
+    raw = _json(path)
+    raw["data"]["operations"][0][field] = value
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(RunArtifactError):
+        store.load_load_result()

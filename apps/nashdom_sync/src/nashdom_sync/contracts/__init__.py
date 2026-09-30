@@ -30,6 +30,7 @@ from nashdom_sync.contracts.extract import (
     ExtractedObjectTypeEnum,
     ExtractResult,
 )
+from nashdom_sync.contracts.load import LoadResult, OperationResult, OperationStatus
 from nashdom_sync.contracts.settings import (
     BitrixClientSettings,
     BrowserSettings,
@@ -52,6 +53,9 @@ from nashdom_sync.contracts.transform import (
 )
 
 __all__ = [
+    "LoadResult",
+    "OperationResult",
+    "OperationStatus",
     "AddItemCommand",
     "AddRequisiteCommand",
     "AddAddressCommand",
