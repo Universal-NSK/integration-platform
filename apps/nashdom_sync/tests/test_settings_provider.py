@@ -21,10 +21,9 @@ from nashdom_sync.providers.settings_provider import (
 from pydantic import ValidationError
 from runtime_files import RuntimeFileReadError, RuntimePaths
 
-VALID_APP_CONFIG = """
-[execution]
-load_enabled = true
+VALID_EXECUTION_CONFIG = "[execution]\nload_enabled = true\n\n"
 
+VALID_APP_CONFIG = """
 [logging]
 level = "INFO"
 console = true
@@ -80,6 +79,7 @@ def _provider(
     paths_config: Optional[Union[str, bytes]] = VALID_PATHS_CONFIG,
     manager_config: Optional[Union[str, bytes]] = VALID_MANAGER_CONFIG,
     region_catalog: Optional[Union[str, bytes]] = VALID_REGION_CATALOG,
+    execution_config: Optional[Union[str, bytes]] = VALID_EXECUTION_CONFIG,
 ) -> Tuple[SettingsProvider, Path]:
     repo_root = (tmp_path / "repository").resolve()
     config_root = repo_root / "config"
@@ -111,6 +111,13 @@ def _provider(
             region_catalog_path.write_bytes(region_catalog)
         else:
             region_catalog_path.write_text(region_catalog, encoding="utf-8")
+
+    if execution_config is not None:
+        execution_path = program_data_root / "sync.execution.toml"
+        if isinstance(execution_config, bytes):
+            execution_path.write_bytes(execution_config)
+        else:
+            execution_path.write_text(execution_config, encoding="utf-8")
 
     paths = RuntimePaths(
         repo_root=repo_root,
@@ -303,7 +310,7 @@ driver_path = "drivers/chromedriver.exe"
 
 @pytest.mark.parametrize(
     "missing_source",
-    ["sync.toml", "sync.paths.toml", "sync.region_slugs.toml", "sync.manager-region.toml"],
+    ["sync.toml", "sync.paths.toml", "sync.region_slugs.toml", "sync.manager-region.toml", "sync.execution.toml"],
 )
 def test_provide_reports_missing_configuration_file(
     tmp_path: Path,
@@ -314,6 +321,7 @@ def test_provide_reports_missing_configuration_file(
         manager_config=None
         if missing_source == "sync.manager-region.toml"
         else VALID_MANAGER_CONFIG,
+        execution_config=None if missing_source == "sync.execution.toml" else VALID_EXECUTION_CONFIG,
         app_config=None if missing_source == "sync.toml" else VALID_APP_CONFIG,
         paths_config=None if missing_source == "sync.paths.toml" else VALID_PATHS_CONFIG,
         region_catalog=(
@@ -330,7 +338,7 @@ def test_provide_reports_missing_configuration_file(
 
 @pytest.mark.parametrize(
     "invalid_source",
-    ["sync.toml", "sync.paths.toml", "sync.region_slugs.toml", "sync.manager-region.toml"],
+    ["sync.toml", "sync.paths.toml", "sync.region_slugs.toml", "sync.manager-region.toml", "sync.execution.toml"],
 )
 def test_provide_wraps_invalid_toml_with_parser_cause(
     tmp_path: Path,
@@ -342,6 +350,7 @@ def test_provide_wraps_invalid_toml_with_parser_cause(
         manager_config=invalid_toml
         if invalid_source == "sync.manager-region.toml"
         else VALID_MANAGER_CONFIG,
+        execution_config=invalid_toml if invalid_source == "sync.execution.toml" else VALID_EXECUTION_CONFIG,
         app_config=invalid_toml if invalid_source == "sync.toml" else VALID_APP_CONFIG,
         paths_config=(invalid_toml if invalid_source == "sync.paths.toml" else VALID_PATHS_CONFIG),
         region_catalog=(
@@ -359,7 +368,7 @@ def test_provide_wraps_invalid_toml_with_parser_cause(
 
 @pytest.mark.parametrize(
     "invalid_source",
-    ["sync.toml", "sync.paths.toml", "sync.region_slugs.toml", "sync.manager-region.toml"],
+    ["sync.toml", "sync.paths.toml", "sync.region_slugs.toml", "sync.manager-region.toml", "sync.execution.toml"],
 )
 def test_provide_wraps_invalid_utf8_with_runtime_file_cause(
     tmp_path: Path,
@@ -371,6 +380,7 @@ def test_provide_wraps_invalid_utf8_with_runtime_file_cause(
         manager_config=invalid_utf8
         if invalid_source == "sync.manager-region.toml"
         else VALID_MANAGER_CONFIG,
+        execution_config=invalid_utf8 if invalid_source == "sync.execution.toml" else VALID_EXECUTION_CONFIG,
         app_config=invalid_utf8 if invalid_source == "sync.toml" else VALID_APP_CONFIG,
         paths_config=(invalid_utf8 if invalid_source == "sync.paths.toml" else VALID_PATHS_CONFIG),
         region_catalog=(
@@ -681,7 +691,7 @@ def test_logging_levels_match_runtime_config(tmp_path: Path, level: str) -> None
 def test_provide_execution_settings(tmp_path: Path, enabled: bool) -> None:
     provider, _ = _provider(
         tmp_path,
-        app_config=VALID_APP_CONFIG.replace("load_enabled = true", f"load_enabled = {str(enabled).lower()}"),
+        execution_config=VALID_EXECUTION_CONFIG.replace("load_enabled = true", f"load_enabled = {str(enabled).lower()}"),
     )
     settings = provider.provide()
     assert isinstance(settings.execution, ExecutionSettings)
@@ -696,7 +706,7 @@ def test_provide_execution_settings(tmp_path: Path, enabled: bool) -> None:
 def test_provide_rejects_non_boolean_load_enabled(tmp_path: Path, value: str) -> None:
     provider, _ = _provider(
         tmp_path,
-        app_config=VALID_APP_CONFIG.replace("load_enabled = true", f"load_enabled = {value}"),
+        execution_config=VALID_EXECUTION_CONFIG.replace("load_enabled = true", f"load_enabled = {value}"),
     )
     with pytest.raises(ConfigurationError, match="execution.load_enabled") as caught:
         provider.provide()
@@ -705,7 +715,7 @@ def test_provide_rejects_non_boolean_load_enabled(tmp_path: Path, value: str) ->
 
 @pytest.mark.parametrize("removed", ["[execution]\nload_enabled = true\n\n", "load_enabled = true\n"])
 def test_provide_requires_execution(tmp_path: Path, removed: str) -> None:
-    provider, _ = _provider(tmp_path, app_config=VALID_APP_CONFIG.replace(removed, ""))
+    provider, _ = _provider(tmp_path, execution_config=VALID_EXECUTION_CONFIG.replace(removed, ""))
     with pytest.raises(ConfigurationError, match="обязательный параметр execution") as caught:
         provider.provide()
     assert isinstance(caught.value.__cause__, ValidationError)
@@ -714,7 +724,16 @@ def test_provide_requires_execution(tmp_path: Path, removed: str) -> None:
 def test_provide_forbids_unknown_execution_fields(tmp_path: Path) -> None:
     provider, _ = _provider(
         tmp_path,
-        app_config=VALID_APP_CONFIG.replace("load_enabled = true", "load_enabled = true\nunknown = false"),
+        execution_config=VALID_EXECUTION_CONFIG.replace("load_enabled = true", "load_enabled = true\nunknown = false"),
     )
     with pytest.raises(ConfigurationError, match="неизвестный параметр execution.unknown"):
         provider.provide()
+
+
+def test_provide_rejects_execution_overlap(tmp_path: Path) -> None:
+    provider, _ = _provider(
+        tmp_path, app_config=VALID_APP_CONFIG + "\n" + VALID_EXECUTION_CONFIG
+    )
+    with pytest.raises(ConfigurationOverlapError, match="execution.load_enabled") as caught:
+        provider.provide()
+    assert "sync.execution.toml" in str(caught.value)
