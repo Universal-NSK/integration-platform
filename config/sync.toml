@@ -5,6 +5,9 @@ log_payloads = false
 max_bytes = 50000000
 backup_count = 4
 
+[execution]
+load_enabled = false   # false — тестовый прогон без записи в CRM
+
 [browser]
 headless = false   # Переключение отображения браузера
 
@@ -13,4 +16,4 @@ gateway_url = "http://127.0.0.1:8765"
 timeout = 180.0
 
 [extract.nashdom]
-objects_to_parse_count = 2   # Кол-во объектов КАЖДОГО РЕГИОНА для парсинга
+objects_to_parse_count = 4   # Кол-во объектов КАЖДОГО РЕГИОНА для парсинга

@@ -34,6 +34,7 @@ from nashdom_sync.contracts.load import LoadResult, OperationResult, OperationSt
 from nashdom_sync.contracts.settings import (
     BitrixClientSettings,
     BrowserSettings,
+    ExecutionSettings,
     ExtractionSettings,
     LoggingSettings,
     NashDomExtractSettings,
@@ -92,6 +93,7 @@ __all__ = [
     "ExtractedObject",
     "ExtractedObjectTypeEnum",
     "ExtractResult",
+    "ExecutionSettings",
     "ExtractionSettings",
     "LoggingSettings",
     "NashDomExtractSettings",

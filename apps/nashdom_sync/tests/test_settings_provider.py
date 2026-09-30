@@ -6,6 +6,7 @@ import tomli
 from nashdom_sync.contracts import (
     BitrixClientSettings,
     BrowserSettings,
+    ExecutionSettings,
     ExtractionSettings,
     NashDomExtractSettings,
     NashDomRegion,
@@ -21,6 +22,9 @@ from pydantic import ValidationError
 from runtime_files import RuntimeFileReadError, RuntimePaths
 
 VALID_APP_CONFIG = """
+[execution]
+load_enabled = true
+
 [logging]
 level = "INFO"
 console = true
@@ -671,3 +675,46 @@ def test_logging_levels_match_runtime_config(tmp_path: Path, level: str) -> None
     config = LoggingConfig(**settings.dict())
     assert config.level == level
     assert config.backup_count == 0
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_provide_execution_settings(tmp_path: Path, enabled: bool) -> None:
+    provider, _ = _provider(
+        tmp_path,
+        app_config=VALID_APP_CONFIG.replace("load_enabled = true", f"load_enabled = {str(enabled).lower()}"),
+    )
+    settings = provider.provide()
+    assert isinstance(settings.execution, ExecutionSettings)
+    assert settings.execution.load_enabled is enabled
+    with pytest.raises(TypeError, match="immutable"):
+        settings.execution.load_enabled = not enabled
+    with pytest.raises(TypeError, match="immutable"):
+        settings.execution = settings.execution
+
+
+@pytest.mark.parametrize("value", ['"false"', '"true"', "0", "1", "0.0", "[]", "{}"])
+def test_provide_rejects_non_boolean_load_enabled(tmp_path: Path, value: str) -> None:
+    provider, _ = _provider(
+        tmp_path,
+        app_config=VALID_APP_CONFIG.replace("load_enabled = true", f"load_enabled = {value}"),
+    )
+    with pytest.raises(ConfigurationError, match="execution.load_enabled") as caught:
+        provider.provide()
+    assert isinstance(caught.value.__cause__, ValidationError)
+
+
+@pytest.mark.parametrize("removed", ["[execution]\nload_enabled = true\n\n", "load_enabled = true\n"])
+def test_provide_requires_execution(tmp_path: Path, removed: str) -> None:
+    provider, _ = _provider(tmp_path, app_config=VALID_APP_CONFIG.replace(removed, ""))
+    with pytest.raises(ConfigurationError, match="обязательный параметр execution") as caught:
+        provider.provide()
+    assert isinstance(caught.value.__cause__, ValidationError)
+
+
+def test_provide_forbids_unknown_execution_fields(tmp_path: Path) -> None:
+    provider, _ = _provider(
+        tmp_path,
+        app_config=VALID_APP_CONFIG.replace("load_enabled = true", "load_enabled = true\nunknown = false"),
+    )
+    with pytest.raises(ConfigurationError, match="неизвестный параметр execution.unknown"):
+        provider.provide()

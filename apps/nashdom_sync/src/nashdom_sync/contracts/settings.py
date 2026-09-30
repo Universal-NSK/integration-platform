@@ -16,6 +16,12 @@ class _StrictSettingsModel(BaseModel):
         extra = "forbid"
 
 
+class ExecutionSettings(_StrictSettingsModel):
+    """Настройки выполнения этапов синхронизации."""
+
+    load_enabled: StrictBool
+
+
 class BrowserSettings(_StrictSettingsModel):
     """Настройки запуска браузера для синхронизации."""
 
@@ -155,6 +161,7 @@ class SyncSettings(_StrictSettingsModel):
     """Единая проверенная конфигурация синхронизации."""
 
     logging: LoggingSettings
+    execution: ExecutionSettings
     browser: BrowserSettings
     bitrix: BitrixClientSettings
     extract: ExtractionSettings

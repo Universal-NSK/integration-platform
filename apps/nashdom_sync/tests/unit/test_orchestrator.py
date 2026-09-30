@@ -67,6 +67,7 @@ class Run:
 def run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Run]:
     settings = SyncSettings.parse_obj(
         {
+            "execution": {"load_enabled": True},
             "logging": {
                 "level": "DEBUG",
                 "console": False,
@@ -210,6 +211,10 @@ def test_happy_path(run: Run) -> None:
     run.constructors["LoadService"].assert_called_once_with(run.settings.bitrix)
     plan = run.constructors["TransformService"].return_value.transform.return_value.plan
     assert run.constructors["LoadService"].return_value.load.call_args.args[0] is plan
+    run.store.save_load_result.assert_called_once_with(
+        run.constructors["LoadService"].return_value.load.return_value
+    )
+    run.constructors["LoadService"].return_value.load.assert_called_once_with(plan)
     run.store.load_sync_plan.assert_not_called()
     run.constructors["CrmProvider"].return_value.provide.assert_called_once_with(
         run.settings.region
@@ -610,3 +615,57 @@ def test_load_result_save_failure_takes_priority_over_partial_result(
     assert caught.value is error
     assert_failed(run, "LOAD", error)
     run.store.mark_completed.assert_not_called()
+
+
+def test_load_disabled_runs_through_transform(run: Run) -> None:
+    data = run.settings.dict()
+    data["execution"] = {"load_enabled": False}
+    run.settings = SyncSettings.parse_obj(data)
+    run.constructors["SettingsProvider"].return_value.provide.return_value = run.settings
+    run.constructors["LoadService"].side_effect = AssertionError("Load не должен создаваться")
+    run.execute()
+
+    assert {p.name for p in run.directory.iterdir()} == {
+        "run.json", "nashdom_sync.log", "crm_context.json", "extract_result.json", "sync_plan.json"
+    }
+    assert not (run.directory / "load_result.json").exists()
+    assert run.manifest()["status"] == "COMPLETED"
+    assert run.manifest()["stage"] == "TRANSFORM"
+    assert run.manifest()["finished_at"] is not None
+    assert run.manifest()["error_type"] is None
+    run.constructors["LoadService"].assert_not_called()
+    run.constructors["LoadService"].return_value.load.assert_not_called()
+    run.store.save_load_result.assert_not_called()
+    run.store.mark_completed.assert_called_once_with()
+    run.store.mark_failed.assert_not_called()
+    run.constructors["CrmProvider"].return_value.provide.assert_called_once_with(run.settings.region)
+    run.constructors["BrowserProvider"].return_value.provide.assert_called_once_with(
+        run.settings.browser
+    )
+    run.constructors["ExtractService"].return_value.extract.assert_called_once_with(
+        run.driver, run.settings.extract
+    )
+    source_result = run.constructors["ExtractService"].return_value.extract.return_value
+    crm_result = run.constructors["CrmProvider"].return_value.provide.return_value
+    run.constructors["TransformService"].return_value.transform.assert_called_once_with(
+        source_result, crm_result, run.settings.region
+    )
+    run.store.save_crm_context.assert_called_once_with(crm_result)
+    run.store.save_extract_result.assert_called_once_with(source_result)
+    run.store.save_sync_plan.assert_called_once_with(
+        run.constructors["TransformService"].return_value.transform.return_value.plan
+    )
+    run.driver.quit.assert_called_once_with()
+    assert [call.args[0] for call in run.store.mark_stage.call_args_list] == [
+        RunStage.CRM_CONTEXT, RunStage.EXTRACT, RunStage.TRANSFORM
+    ]
+    expected = [("sync_started", "INITIALIZATION")]
+    for stage in ("INITIALIZATION", "CRM_CONTEXT", "EXTRACT", "TRANSFORM"):
+        expected.extend([("stage_started", stage), ("stage_completed", stage)])
+    expected.extend([("load_skipped", "TRANSFORM"), ("sync_completed", "TRANSFORM")])
+    assert run.events == expected
+    lines = run.log().splitlines()
+    skipped = next(line for line in lines if "load_skipped" in line)
+    assert "reason=disabled_by_configuration" in skipped
+    assert "INFO" in skipped
+    assert "stage=LOAD" not in run.log()

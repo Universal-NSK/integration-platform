@@ -78,7 +78,9 @@ class SyncOrchestrator:
             emit("sync_started", overall_started)
             emit("stage_started", stage_started)
             crm_provider = CrmProvider(settings.bitrix)
-            load_service = LoadService(settings.bitrix)
+            load_service = (
+                LoadService(settings.bitrix) if settings.execution.load_enabled else None
+            )
             emit("stage_completed", stage_started)
 
             current_stage = RunStage.CRM_CONTEXT
@@ -115,6 +117,20 @@ class SyncOrchestrator:
             )
             artifacts.save_sync_plan(transform_result.plan)
             emit("stage_completed", stage_started)
+            if load_service is None:
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "load_skipped",
+                    run_id=run_dir.name,
+                    stage=current_stage.value,
+                    duration_seconds=perf_counter() - overall_started,
+                    reason="disabled_by_configuration",
+                )
+                artifacts.mark_completed()
+                emit("sync_completed", overall_started)
+                return
+
             current_stage = RunStage.LOAD
             stage_started = perf_counter()
             artifacts.mark_stage(current_stage)
