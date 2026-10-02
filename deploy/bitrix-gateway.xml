@@ -1,0 +1,24 @@
+<service>
+  <id>BitrixGateway</id>
+  <name>Bitrix Gateway</name>
+  <description>HTTP-шлюз Bitrix Gateway</description>
+
+  <executable>%SystemRoot%\System32\cmd.exe</executable>
+  <arguments>/c ""%BASE%\run-gateway.cmd""</arguments>
+  <workingdirectory>%BASE%\..</workingdirectory>
+
+  <startmode>Automatic</startmode>
+
+  <onfailure action="restart" delay="10 sec"/>
+  <onfailure action="restart" delay="30 sec"/>
+  <onfailure action="restart" delay="60 sec"/>
+  <resetfailure>1 hour</resetfailure>
+
+  <stoptimeout>15 sec</stoptimeout>
+
+  <logpath>%BASE%\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+</service>
