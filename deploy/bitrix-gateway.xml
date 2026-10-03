@@ -3,8 +3,8 @@
   <name>Bitrix Gateway</name>
   <description>HTTP-шлюз Bitrix Gateway</description>
 
-  <executable>%SystemRoot%\System32\cmd.exe</executable>
-  <arguments>/c ""%BASE%\run-gateway.cmd""</arguments>
+  <executable>%BASE%\..\.venv\Scripts\python.exe</executable>
+  <arguments>-I -c "from bitrix_gateway import main; main()"</arguments>
   <workingdirectory>%BASE%\..</workingdirectory>
 
   <startmode>Automatic</startmode>
