@@ -11,22 +11,32 @@ set "WINSW=%~dp0bitrix-gateway.exe"
 set "WINSW_XML=%~dp0bitrix-gateway.xml"
 set "PYTHON=%REPO_ROOT%\.venv\Scripts\python.exe"
 
-rem Должно соответствовать локальному endpoint Gateway.
 set "HEALTH_URL=http://127.0.0.1:8765/health"
 
-rem Сколько секунд примерно ждать перехода службы в RUNNING.
+rem Максимум ~30 секунд на переход службы в RUNNING.
 set "START_MAX_ATTEMPTS=30"
 
-rem Gateway считается стабильно запущенным только после
-rem нескольких последовательных успешных health-check.
+rem Gateway должен успешно ответить несколько раз подряд.
 set "HEALTH_REQUIRED_SUCCESSES=5"
+
+rem Максимальное количество попыток /health.
 set "HEALTH_MAX_ATTEMPTS=15"
+
+
+rem ------------------------------------------------------------
+rem Проверка прав администратора.
+rem ------------------------------------------------------------
 
 net session >nul 2>&1
 if errorlevel 1 (
     echo [ОШИБКА] Запустите скрипт от имени администратора.
     exit /b 1
 )
+
+
+rem ------------------------------------------------------------
+rem Проверка production Python.
+rem ------------------------------------------------------------
 
 if not exist "%PYTHON%" (
     echo [ОШИБКА] Не найден Python production-окружения:
@@ -36,10 +46,15 @@ if not exist "%PYTHON%" (
     exit /b 1
 )
 
-rem Если exe ещё не переименован, делаем копию из WinSW.NET2.exe.
+
+rem ------------------------------------------------------------
+rem Проверка WinSW.
+rem ------------------------------------------------------------
+
 if not exist "%WINSW%" (
     if exist "%~dp0WinSW.NET2.exe" (
         copy /y "%~dp0WinSW.NET2.exe" "%WINSW%" >nul
+
         if errorlevel 1 (
             echo [ОШИБКА] Не удалось создать "%WINSW%".
             exit /b 1
@@ -60,6 +75,7 @@ if not exist "%WINSW_XML%" (
 
 if not exist "%~dp0logs" (
     mkdir "%~dp0logs"
+
     if errorlevel 1 (
         echo [ОШИБКА] Не удалось создать каталог логов:
         echo          "%~dp0logs"
@@ -67,15 +83,18 @@ if not exist "%~dp0logs" (
     )
 )
 
+
 rem ------------------------------------------------------------
-rem Установка службы, если её ещё нет.
+rem Установка службы.
 rem ------------------------------------------------------------
 
 sc query "%SVC_ID%" >nul 2>&1
+
 if errorlevel 1 (
     echo [ИНФО] Служба %SVC_ID% не установлена, устанавливаю...
 
     "%WINSW%" install
+
     if errorlevel 1 (
         echo [ОШИБКА] Не удалось установить службу.
         echo          Смотрите вывод WinSW выше.
@@ -83,42 +102,53 @@ if errorlevel 1 (
     )
 )
 
+
 rem ------------------------------------------------------------
-rem Запуск.
-rem Даже если служба уже RUNNING, ниже всё равно выполняется health-check.
+rem Проверяем, запущена ли служба уже сейчас.
 rem ------------------------------------------------------------
 
-sc query "%SVC_ID%" | find "RUNNING" >nul
+call :is_service_running
+
 if not errorlevel 1 (
     echo [ИНФО] Служба %SVC_ID% уже запущена.
     goto health_begin
 )
 
+
+rem ------------------------------------------------------------
+rem Запуск службы.
+rem ------------------------------------------------------------
+
 echo [ИНФО] Запускаю службу %SVC_ID%...
 
 "%WINSW%" start
+
 if errorlevel 1 (
     echo [ОШИБКА] Не удалось отправить команду запуска службы.
     echo          Логи: %~dp0logs
     exit /b 1
 )
 
+
 rem ------------------------------------------------------------
-rem Ждём, пока SCM увидит RUNNING.
+rem Ожидаем RUNNING.
 rem ------------------------------------------------------------
 
 set "START_ATTEMPT=0"
 
 :wait_running
 
-sc query "%SVC_ID%" | find "RUNNING" >nul
+call :is_service_running
+
 if not errorlevel 1 goto health_begin
 
 set /a START_ATTEMPT+=1
 
 if %START_ATTEMPT% GEQ %START_MAX_ATTEMPTS% goto start_timeout
 
-rem Примерно 1 секунда.
+echo [ИНФО] Ожидание запуска службы... %START_ATTEMPT%/%START_MAX_ATTEMPTS%
+
+rem ~1 секунда.
 ping -n 2 127.0.0.1 >nul
 
 goto wait_running
@@ -129,7 +159,9 @@ goto wait_running
 echo.
 echo [ОШИБКА] Служба не перешла в состояние RUNNING.
 echo.
+
 sc query "%SVC_ID%"
+
 echo.
 echo Логи:
 echo   %~dp0logs
@@ -139,11 +171,12 @@ exit /b 1
 
 rem ------------------------------------------------------------
 rem Health-check.
-rem Требуем несколько ПОСЛЕДОВАТЕЛЬНЫХ успешных ответов.
 rem ------------------------------------------------------------
 
 :health_begin
 
+echo.
+echo [ИНФО] Служба находится в состоянии RUNNING.
 echo.
 echo [ИНФО] Проверка Gateway:
 echo        %HEALTH_URL%
@@ -165,7 +198,7 @@ if errorlevel 1 goto health_failed_once
 
 
 rem ------------------------------------------------------------
-rem Успешная проверка.
+rem Успешный health-check.
 rem ------------------------------------------------------------
 
 set /a HEALTH_SUCCESS+=1
@@ -174,15 +207,14 @@ echo [OK] Gateway отвечает. Последовательных успех�
 
 if %HEALTH_SUCCESS% GEQ %HEALTH_REQUIRED_SUCCESSES% goto healthy
 
-rem Примерно 2 секунды между проверками.
+rem ~2 секунды.
 ping -n 3 127.0.0.1 >nul
 
 goto health_loop
 
 
 rem ------------------------------------------------------------
-rem Неуспешная проверка.
-rem Счётчик последовательных успехов обнуляется.
+rem Неуспешный health-check.
 rem ------------------------------------------------------------
 
 :health_failed_once
@@ -193,7 +225,16 @@ echo [ИНФО] Gateway пока недоступен.
 
 if %HEALTH_ATTEMPT% GEQ %HEALTH_MAX_ATTEMPTS% goto health_failed
 
-rem Примерно 2 секунды до новой попытки.
+rem Проверяем, не умерла ли сама служба.
+call :is_service_running
+
+if errorlevel 1 (
+    echo.
+    echo [ОШИБКА] Во время health-check служба перестала быть RUNNING.
+    goto health_failed
+)
+
+rem ~2 секунды.
 ping -n 3 127.0.0.1 >nul
 
 goto health_loop
@@ -206,7 +247,9 @@ echo [ОШИБКА] Gateway не прошёл проверку доступно�
 echo          Выполнено попыток: %HEALTH_ATTEMPT%
 echo.
 echo Состояние службы:
+
 sc query "%SVC_ID%"
+
 echo.
 echo Логи WinSW:
 echo   %~dp0logs
@@ -225,5 +268,20 @@ echo.
 echo [OK] Gateway запущен и стабильно отвечает на /health.
 echo      Успешных последовательных проверок: %HEALTH_SUCCESS%.
 echo      Логи WinSW: %~dp0logs
+
+exit /b 0
+
+
+rem ============================================================
+rem Подпрограммы
+rem ============================================================
+
+:is_service_running
+
+sc query "%SVC_ID%" 2>nul | findstr /R /C:"STATE *: *4 *RUNNING" >nul
+
+if errorlevel 1 (
+    exit /b 1
+)
 
 exit /b 0
