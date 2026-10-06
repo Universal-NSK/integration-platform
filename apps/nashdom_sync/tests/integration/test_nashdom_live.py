@@ -34,6 +34,12 @@ def _live_browser_settings() -> BrowserSettings:
     driver_path = os.environ.get(_DRIVER_PATH_ENV)
     if browser_path and driver_path:
         return BrowserSettings(
+            page_load_timeout_seconds=120.0,
+            script_timeout_seconds=60.0,
+            page_load_strategy="eager",
+            disable_images=True,
+            window_width=1280,
+            window_height=720,
             headless=False,
             browser_path=Path(browser_path),
             driver_path=Path(driver_path),
@@ -50,6 +56,9 @@ def _live_browser_settings() -> BrowserSettings:
 
 def _live_objects(target_count: int) -> List[ExtractedObject]:
     settings = NashDomExtractSettings(
+        element_wait_timeout_seconds=60.0,
+        navigation_max_attempts=3,
+        navigation_retry_delay_seconds=10.0,
         objects_to_parse_count=target_count,
         regions=(_RESEARCH_REGION,),
     )
@@ -57,7 +66,12 @@ def _live_objects(target_count: int) -> List[ExtractedObject]:
 
     try:
         try:
-            objects = NashDomClient(driver).get_objects(settings)
+            objects = NashDomClient(
+                driver,
+                element_wait_timeout_seconds=60.0,
+                navigation_max_attempts=3,
+                navigation_retry_delay_seconds=10.0,
+            ).get_objects(settings)
         except NashDomUnavailableError as exc:
             pytest.skip(f"наш.дом.рф временно недоступен: {exc}")
 
@@ -103,7 +117,12 @@ def test_live_bulk_developers_returns_confirmed_records(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     driver = BrowserProvider().provide(_live_browser_settings())
-    client = NashDomClient(driver)
+    client = NashDomClient(
+        driver,
+        element_wait_timeout_seconds=60.0,
+        navigation_max_attempts=3,
+        navigation_retry_delay_seconds=10.0,
+    )
 
     def fail_if_detail_fallback_runs(developer_id: int) -> Dict[str, Any]:
         pytest.fail(
@@ -116,6 +135,9 @@ def test_live_bulk_developers_returns_confirmed_records(
         try:
             client.get_objects(
                 NashDomExtractSettings(
+                    element_wait_timeout_seconds=60.0,
+                    navigation_max_attempts=3,
+                    navigation_retry_delay_seconds=10.0,
                     objects_to_parse_count=1,
                     regions=(_RESEARCH_REGION,),
                 )
@@ -139,12 +161,20 @@ def test_live_bulk_developers_returns_confirmed_records(
 @pytest.mark.nashdom_live
 def test_live_company_groups_returns_confirmed_records() -> None:
     driver = BrowserProvider().provide(_live_browser_settings())
-    client = NashDomClient(driver)
+    client = NashDomClient(
+        driver,
+        element_wait_timeout_seconds=60.0,
+        navigation_max_attempts=3,
+        navigation_retry_delay_seconds=10.0,
+    )
 
     try:
         try:
             client.get_objects(
                 NashDomExtractSettings(
+                    element_wait_timeout_seconds=60.0,
+                    navigation_max_attempts=3,
+                    navigation_retry_delay_seconds=10.0,
                     objects_to_parse_count=1,
                     regions=(_RESEARCH_REGION,),
                 )

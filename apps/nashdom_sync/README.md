@@ -185,3 +185,55 @@ Load не выполняется; успех означает `COMPLETED / TRANS
 при недоступности диска обновление manifest не гарантируется. При ошибке настроек
 лог-файла может ещё не быть. Сбои создания каталога или начального manifest
 происходят до появления рабочего хранилища.
+
+
+## Private browser/extract runtime settings
+
+После обновления создайте `sync.browser.toml` и `sync.extract.toml` в
+`C:\ProgramData\Universal\IntegrationPlatform`. Все поля обязательны;
+невалидные или отсутствующие настройки останавливают запуск до создания браузера.
+Старый `sync.paths.toml` больше не используется; перенесите browser_path/driver_path
+в sync.browser.toml. Реальные private файлы не включаются в Git и не удаляются миграцией.
+
+`sync.browser.toml`:
+```toml
+[browser]
+headless = false
+browser_path = "browser/chrome.exe"
+driver_path = "browser/chromedriver.exe"
+page_load_timeout_seconds = 120.0
+script_timeout_seconds = 60.0
+page_load_strategy = "eager"
+disable_images = true
+window_width = 1280
+window_height = 720
+```
+
+`sync.extract.toml`:
+```toml
+[extract.nashdom]
+objects_to_parse_count = 20
+element_wait_timeout_seconds = 60.0
+navigation_max_attempts = 3
+navigation_retry_delay_seconds = 10.0
+```
+
+Browser paths разрешаются относительно ProgramData. Private layout также включает
+`sync.manager-region.toml`, `sync.execution.toml`, `bitrix.secrets.toml`.
+Tracked `config/sync.toml` содержит только logging/bitrix;
+`config/sync.region_slugs.toml` остаётся tracked.
+
+BrowserProvider задаёт page-load/script timeouts, стратегию загрузки и viewport.
+Images блокируются только при disable_images=true. JavaScript сохраняется.
+Chrome получает --disable-background-networking, --disable-component-update,
+--disable-default-apps, --disable-extensions, --disable-sync, --no-first-run;
+--headless=new добавляется только при headless=true.
+
+Все WebDriverWait используют element_wait_timeout_seconds. Retry выполняется только
+для driver.get (регион, browser-context, developer detail, company-group detail):
+3 — общее число попыток, включая первую, с 10 секундами между попытками.
+Повторяются TimeoutException и WebDriverException с net::ERR_*, timed out/timeout.
+DOM/JSON/contract errors, отсутствие __NEXT_DATA__, challenge и неизвестные
+WebDriver errors не повторяются. После transient failure выполняется best-effort
+window.stop(); WARNING nashdom_navigation_retry содержит только безопасные metadata.
+Transform/Load и fetch/XHR не повторяются.

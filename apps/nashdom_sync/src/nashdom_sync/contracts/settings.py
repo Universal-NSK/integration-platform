@@ -4,6 +4,7 @@ from typing import Any, Dict, Mapping, Tuple, cast
 from pydantic import (
     BaseModel,
     StrictBool,
+    StrictFloat,
     StrictInt,
     StrictStr,
     validator,  # pyright: ignore[reportUnknownVariableType]
@@ -28,6 +29,26 @@ class BrowserSettings(_StrictSettingsModel):
     headless: StrictBool
     browser_path: Path
     driver_path: Path
+    page_load_timeout_seconds: StrictFloat
+    script_timeout_seconds: StrictFloat
+    page_load_strategy: StrictStr
+    disable_images: StrictBool
+    window_width: StrictInt
+    window_height: StrictInt
+
+    @validator(
+        "page_load_timeout_seconds", "script_timeout_seconds", "window_width", "window_height"
+    )  # pyright: ignore[reportUntypedFunctionDecorator]
+    def _positive_browser_value(cls, value: float) -> float:
+        if not value > 0 or value == float("inf"):
+            raise ValueError("value must be finite and positive")
+        return value
+
+    @validator("page_load_strategy")  # pyright: ignore[reportUntypedFunctionDecorator]
+    def _valid_strategy(cls, value: str) -> str:
+        if value not in ("normal", "eager", "none"):
+            raise ValueError("invalid page load strategy")
+        return value
 
 
 class BitrixClientSettings(_StrictSettingsModel):
@@ -62,6 +83,21 @@ class NashDomExtractSettings(_StrictSettingsModel):
 
     objects_to_parse_count: StrictInt
     regions: Tuple[NashDomRegion, ...]
+    element_wait_timeout_seconds: StrictFloat
+    navigation_max_attempts: StrictInt
+    navigation_retry_delay_seconds: StrictFloat
+
+    @validator("element_wait_timeout_seconds", "navigation_max_attempts")  # pyright: ignore[reportUntypedFunctionDecorator]
+    def _positive_policy_value(cls, value: float) -> float:
+        if not value > 0 or value == float("inf"):
+            raise ValueError("value must be finite and positive")
+        return value
+
+    @validator("navigation_retry_delay_seconds")  # pyright: ignore[reportUntypedFunctionDecorator]
+    def _nonnegative_delay(cls, value: float) -> float:
+        if not value >= 0 or value == float("inf"):
+            raise ValueError("delay must be finite and nonnegative")
+        return value
 
     @validator(  # pyright: ignore[reportUntypedFunctionDecorator]
         "objects_to_parse_count"

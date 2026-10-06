@@ -19,7 +19,8 @@ from nashdom_sync.providers.settings_provider.exceptions import (
 _APP_CONFIG_NAME = "sync.toml"
 _EXECUTION_CONFIG_NAME = "sync.execution.toml"
 _MANAGER_REGION_CONFIG_NAME = "sync.manager-region.toml"
-_PATHS_CONFIG_NAME = "sync.paths.toml"
+_BROWSER_CONFIG_NAME = "sync.browser.toml"
+_EXTRACT_CONFIG_NAME = "sync.extract.toml"
 _REGION_SLUGS_CONFIG_NAME = "sync.region_slugs.toml"
 _REGION_CATALOG_KEY = "_region_catalog"
 _PATH_FIELDS = ("browser_path", "driver_path")
@@ -55,9 +56,11 @@ class SettingsProvider:
     def provide(self) -> SyncSettings:
         """Вернуть единую проверенную конфигурацию синхронизации."""
         app_settings = self._load_toml(self._paths.config_file(_APP_CONFIG_NAME))
-        path_settings = self._load_toml(self._paths.program_data_file(_PATHS_CONFIG_NAME))
+        browser_settings = self._load_toml(self._paths.program_data_file(_BROWSER_CONFIG_NAME))
+        extract_settings = self._load_toml(self._paths.program_data_file(_EXTRACT_CONFIG_NAME))
         region_catalog = self._load_toml(self._paths.config_file(_REGION_SLUGS_CONFIG_NAME))
-        merged_settings = self._merge_settings(app_settings, path_settings)
+        merged_settings = self._merge_settings(app_settings, browser_settings)
+        merged_settings = self._merge_settings(merged_settings, extract_settings)
         manager_settings = self._load_toml(
             self._paths.program_data_file(_MANAGER_REGION_CONFIG_NAME)
         )

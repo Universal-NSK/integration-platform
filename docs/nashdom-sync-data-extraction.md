@@ -11,7 +11,7 @@
 - `BrowserProvider` создаёт Selenium Chrome `WebDriver` по проверенным настройкам.
 - Жизненным циклом браузера владеет `Orchestrator`: создание драйвера оборачивается в `try/finally`, а `driver.quit()` вызывается в `finally`. `NashDomClient` не должен самостоятельно закрывать переданный ему драйвер.
 - Production работает на Windows Server 2008 R2 с 4 GB RAM. Память Chrome/Selenium — критичный ресурс.
-- Headless-режим ранее приводил к антибот-проверке. В production браузер запускается не headless; текущий `config/sync.toml` также содержит `headless = false`.
+- Headless-режим ранее приводил к антибот-проверке. В production браузер запускается не headless; private `sync.browser.toml` задаёт `headless = false`.
 - Прямой HTTP-запрос к внутреннему API вне браузерного контекста вернул `403 Forbidden`.
 
 ### Два источника данных
@@ -112,7 +112,11 @@ fetch## Решения для production-прототипа
 Orchestrator:
     driver = BrowserProvider.provide(...)
     try:
-        result = NashDomClient(driver).get_objects(objects_limit)
+        result = NashDomClient(driver,
+            element_wait_timeout_seconds=settings.element_wait_timeout_seconds,
+            navigation_max_attempts=settings.navigation_max_attempts,
+            navigation_retry_delay_seconds=settings.navigation_retry_delay_seconds,
+        ).get_objects(settings)
     finally:
         driver.quit()
 

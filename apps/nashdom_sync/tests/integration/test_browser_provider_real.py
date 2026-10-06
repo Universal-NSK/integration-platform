@@ -26,6 +26,12 @@ def _real_browser_settings() -> BrowserSettings:
 
     if browser_path and driver_path:
         return BrowserSettings(
+            page_load_timeout_seconds=120.0,
+            script_timeout_seconds=60.0,
+            page_load_strategy="eager",
+            disable_images=True,
+            window_width=1280,
+            window_height=720,
             headless=False,
             browser_path=Path(browser_path),
             driver_path=Path(driver_path),

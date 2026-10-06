@@ -71,7 +71,12 @@ class ExtractService:
         stage = "objects"
         stage_started_at = perf_counter()
         try:
-            client = NashDomClient(driver)
+            client = NashDomClient(
+                driver,
+                element_wait_timeout_seconds=settings.nashdom.element_wait_timeout_seconds,
+                navigation_max_attempts=settings.nashdom.navigation_max_attempts,
+                navigation_retry_delay_seconds=settings.nashdom.navigation_retry_delay_seconds,
+            )
             validator = SourceDataValidator()
 
             stage_started_at = perf_counter()

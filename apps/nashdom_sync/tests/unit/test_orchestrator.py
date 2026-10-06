@@ -77,11 +77,25 @@ def run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Run]:
             },
             "browser": {
                 "headless": True,
+                "page_load_timeout_seconds": 120.0,
+                "script_timeout_seconds": 60.0,
+                "page_load_strategy": "eager",
+                "disable_images": True,
+                "window_width": 1280,
+                "window_height": 720,
                 "browser_path": tmp_path / "chrome.exe",
                 "driver_path": tmp_path / "driver.exe",
             },
             "bitrix": {"gateway_url": "http://example.invalid", "timeout": 2},
-            "extract": {"nashdom": {"objects_to_parse_count": 1, "regions": []}},
+            "extract": {
+                "nashdom": {
+                    "objects_to_parse_count": 1,
+                    "regions": [],
+                    "element_wait_timeout_seconds": 60.0,
+                    "navigation_max_attempts": 3,
+                    "navigation_retry_delay_seconds": 10.0,
+                }
+            },
             "region": {"default_assigned_by_name": "Менеджер", "assignment": {}},
         }
     )

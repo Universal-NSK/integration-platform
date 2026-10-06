@@ -7,5 +7,5 @@ class ConfigurationOverlapError(ConfigurationError):
 
     def __init__(self, parameter_path: str) -> None:
         super().__init__(
-            f"Параметр {parameter_path} определён одновременно в нескольких источниках: sync.toml, sync.paths.toml, sync.manager-region.toml, sync.execution.toml"
+            f"Параметр {parameter_path} определён одновременно в нескольких источниках: sync.toml, sync.browser.toml, sync.extract.toml, sync.manager-region.toml, sync.execution.toml"
         )

@@ -24,6 +24,9 @@ from selenium.webdriver.remote.webdriver import WebDriver
 def _settings() -> ExtractionSettings:
     return ExtractionSettings(
         nashdom=NashDomExtractSettings(
+            element_wait_timeout_seconds=60.0,
+            navigation_max_attempts=3,
+            navigation_retry_delay_seconds=10.0,
             objects_to_parse_count=5,
             regions=(
                 NashDomRegion(
@@ -93,7 +96,12 @@ def test_extract_returns_full_typed_result(
 
     result = ExtractService().extract(driver, _settings())
 
-    client_type.assert_called_once_with(driver)
+    client_type.assert_called_once_with(
+        driver,
+        element_wait_timeout_seconds=60.0,
+        navigation_max_attempts=3,
+        navigation_retry_delay_seconds=10.0,
+    )
     client.get_objects.assert_called_once_with(_settings().nashdom)
     client.get_developers.assert_called_once_with({100})
     client.get_company_groups.assert_called_once_with(set())

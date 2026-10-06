@@ -1,6 +1,7 @@
 import json
 import logging
 from dataclasses import dataclass, field
+from time import sleep
 from typing import Any, Dict, List, Optional, Set, Tuple, cast
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
@@ -31,7 +32,6 @@ from nashdom_sync.extract.nashdom.normalizer import NashDomDataNormalizer
 
 logger = logging.getLogger(__name__)
 
-_WAIT_TIMEOUT_SECONDS = 30
 _API_BATCH_SIZE = 20
 _API_ENDPOINT_MARKER = "/api/kn/object"
 _DEVELOPER_API_BATCH_SIZE = 1000
@@ -205,8 +205,18 @@ class _DeveloperApiBatch:
 class NashDomClient:
     """Получает данные NashDom в переданной браузерной сессии."""
 
-    def __init__(self, driver: WebDriver) -> None:
+    def __init__(
+        self,
+        driver: WebDriver,
+        *,
+        element_wait_timeout_seconds: float,
+        navigation_max_attempts: int,
+        navigation_retry_delay_seconds: float,
+    ) -> None:
         self._driver = driver
+        self._element_wait_timeout_seconds = element_wait_timeout_seconds
+        self._navigation_max_attempts = navigation_max_attempts
+        self._navigation_retry_delay_seconds = navigation_retry_delay_seconds
         self._normalizer = NashDomDataNormalizer()
 
     def get_objects(
@@ -214,7 +224,6 @@ class NashDomClient:
         settings: NashDomExtractSettings,
     ) -> List[ExtractedObject]:
         """Получить не более заданного числа объектов для каждого региона."""
-        self._configure_timeouts()
         objects: List[ExtractedObject] = []
 
         for region in settings.regions:
@@ -232,7 +241,6 @@ class NashDomClient:
         if not developer_ids:
             return []
 
-        self._configure_timeouts()
         self._ensure_nashdom_context()
         raw_developers = self._collect_bulk_developers(developer_ids)
 
@@ -261,7 +269,6 @@ class NashDomClient:
         if not company_group_ids:
             return []
 
-        self._configure_timeouts()
         self._ensure_nashdom_context()
         raw_company_groups: Dict[int, Dict[str, Any]] = {}
         fallback_ids: List[int] = []
@@ -540,21 +547,7 @@ class NashDomClient:
         if urlsplit(current_url).netloc == urlsplit(_BASE_URL).netloc:
             return
 
-        try:
-            self._driver.get(_BASE_URL)
-        except TimeoutException as exc:
-            raise NashDomUnavailableError(
-                "NashDom не ответил при подготовке browser-context для ERZ API"
-            ) from exc
-        except WebDriverException as exc:
-            error_text = str(exc).lower()
-            if "net::err_" in error_text or "timed out" in error_text or "timeout" in error_text:
-                raise NashDomUnavailableError(
-                    "Сетевая ошибка при подготовке browser-context для ERZ API"
-                ) from exc
-            raise NashDomClientError(
-                "Браузер не смог подготовить browser-context для ERZ API"
-            ) from exc
+        self._navigate(_BASE_URL, "context")
 
         self._raise_if_unavailable_developer_page("подготовки ERZ API")
 
@@ -642,21 +635,11 @@ class NashDomClient:
         return typed_raw_company_group
 
     def _open_company_group_detail(self, company_group_id: int) -> None:
-        try:
-            self._driver.get(self._build_company_group_detail_url(company_group_id))
-        except TimeoutException as exc:
-            raise NashDomUnavailableError(
-                f"NashDom не ответил при открытии группы компаний {company_group_id}"
-            ) from exc
-        except WebDriverException as exc:
-            error_text = str(exc).lower()
-            if "net::err_" in error_text or "timed out" in error_text or "timeout" in error_text:
-                raise NashDomUnavailableError(
-                    f"Сетевая ошибка при открытии группы компаний {company_group_id}"
-                ) from exc
-            raise NashDomClientError(
-                f"Браузер не смог открыть страницу группы компаний {company_group_id}"
-            ) from exc
+        self._navigate(
+            self._build_company_group_detail_url(company_group_id),
+            "company_group",
+            company_group_id,
+        )
 
         self._raise_if_unavailable_developer_page(f"группы компаний {company_group_id}")
 
@@ -665,7 +648,7 @@ class NashDomClient:
         company_group_id: int,
     ) -> Dict[str, Any]:
         try:
-            element = WebDriverWait(self._driver, _WAIT_TIMEOUT_SECONDS).until(
+            element = WebDriverWait(self._driver, self._element_wait_timeout_seconds).until(
                 EC.presence_of_element_located((By.ID, "__NEXT_DATA__"))
             )
         except TimeoutException as exc:
@@ -764,21 +747,7 @@ class NashDomClient:
         return typed_raw_developer
 
     def _open_developer_detail(self, developer_id: int) -> None:
-        try:
-            self._driver.get(self._build_developer_detail_url(developer_id))
-        except TimeoutException as exc:
-            raise NashDomUnavailableError(
-                f"NashDom не ответил при открытии застройщика {developer_id}"
-            ) from exc
-        except WebDriverException as exc:
-            error_text = str(exc).lower()
-            if "net::err_" in error_text or "timed out" in error_text or "timeout" in error_text:
-                raise NashDomUnavailableError(
-                    f"Сетевая ошибка при открытии застройщика {developer_id}"
-                ) from exc
-            raise NashDomClientError(
-                f"Браузер не смог открыть страницу застройщика {developer_id}"
-            ) from exc
+        self._navigate(self._build_developer_detail_url(developer_id), "developer", developer_id)
 
         self._raise_if_unavailable_developer_page(f"застройщика {developer_id}")
 
@@ -799,7 +768,7 @@ class NashDomClient:
 
     def _read_developer_next_data(self, developer_id: int) -> Dict[str, Any]:
         try:
-            element = WebDriverWait(self._driver, _WAIT_TIMEOUT_SECONDS).until(
+            element = WebDriverWait(self._driver, self._element_wait_timeout_seconds).until(
                 EC.presence_of_element_located((By.ID, "__NEXT_DATA__"))
             )
         except TimeoutException as exc:
@@ -849,30 +818,49 @@ class NashDomClient:
         xhr_objects = self._collect_api_objects(captured_request, target_count)
         return self._normalizer.normalize_objects(xhr_objects)
 
-    def _configure_timeouts(self) -> None:
-        try:
-            self._driver.set_page_load_timeout(_WAIT_TIMEOUT_SECONDS)
-            self._driver.set_script_timeout(_WAIT_TIMEOUT_SECONDS)
-        except WebDriverException as exc:
-            raise NashDomClientError("Не удалось настроить таймауты браузера") from exc
+    def _navigate(self, url: str, operation: str, numeric_id: Optional[int] = None) -> None:
+        for attempt in range(1, self._navigation_max_attempts + 1):
+            try:
+                self._driver.get(url)
+                return
+            except WebDriverException as exc:
+                error_text = str(exc).lower()
+                if (
+                    isinstance(exc, TimeoutException)
+                    or "timed out" in error_text
+                    or "timeout" in error_text
+                ):
+                    reason = "timeout"
+                elif "net::err_" in error_text:
+                    reason = "network"
+                else:
+                    raise NashDomClientError(
+                        f"Браузер не смог открыть страницу NashDom: {operation} {numeric_id}"
+                    ) from exc
+                try:
+                    self._driver.execute_script("window.stop();")  # pyright: ignore[reportUnknownMemberType]
+                except Exception:
+                    pass
+                if attempt == self._navigation_max_attempts:
+                    raise NashDomUnavailableError(
+                        f"NashDom не ответил: {operation} {numeric_id}; исчерпано попыток: {attempt}"
+                    ) from exc
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "nashdom_navigation_retry",
+                    operation=operation,
+                    attempt=attempt,
+                    max_attempts=self._navigation_max_attempts,
+                    retry_delay_seconds=self._navigation_retry_delay_seconds,
+                    reason=reason,
+                    numeric_id=numeric_id,
+                )
+                sleep(self._navigation_retry_delay_seconds)
 
     def _open_region(self, region: NashDomRegion) -> None:
         url = self._build_region_url(region.slug)
-        try:
-            self._driver.get(url)
-        except TimeoutException as exc:
-            raise NashDomUnavailableError(
-                f"NashDom не ответил вовремя при открытии региона {region.code}"
-            ) from exc
-        except WebDriverException as exc:
-            error_text = str(exc).lower()
-            if "net::err_" in error_text or "timed out" in error_text or "timeout" in error_text:
-                raise NashDomUnavailableError(
-                    f"Сетевая ошибка при открытии NashDom для региона {region.code}"
-                ) from exc
-            raise NashDomClientError(
-                f"Браузер не смог открыть страницу NashDom для региона {region.code}"
-            ) from exc
+        self._navigate(url, "region", region.code)
 
         self._raise_if_unavailable_page(region.code)
 
@@ -901,7 +889,7 @@ class NashDomClient:
 
     def _read_ssr_objects(self) -> List[Dict[str, Any]]:
         try:
-            element = WebDriverWait(self._driver, _WAIT_TIMEOUT_SECONDS).until(
+            element = WebDriverWait(self._driver, self._element_wait_timeout_seconds).until(
                 EC.presence_of_element_located((By.ID, "__NEXT_DATA__"))
             )
         except TimeoutException as exc:
@@ -986,7 +974,7 @@ class NashDomClient:
 
     def _click_load_more(self, locator: _Locator) -> None:
         try:
-            button = WebDriverWait(self._driver, _WAIT_TIMEOUT_SECONDS).until(
+            button = WebDriverWait(self._driver, self._element_wait_timeout_seconds).until(
                 EC.element_to_be_clickable(locator)
             )
             self._driver.execute_script(  # pyright: ignore[reportUnknownMemberType]
@@ -1025,7 +1013,7 @@ class NashDomClient:
             return result is True
 
         try:
-            WebDriverWait(self._driver, _WAIT_TIMEOUT_SECONDS).until(request_captured)
+            WebDriverWait(self._driver, self._element_wait_timeout_seconds).until(request_captured)
             raw_request_value = cast(
                 object,
                 self._driver.execute_script(  # pyright: ignore[reportUnknownMemberType]

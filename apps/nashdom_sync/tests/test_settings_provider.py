@@ -31,15 +31,10 @@ log_payloads = false
 max_bytes = 50000000
 backup_count = 4
 
-[browser]
-headless = false
-
 [bitrix]
 gateway_url = "http://127.0.0.1:8765"
 timeout = 20.0
 
-[extract.nashdom]
-objects_to_parse_count = 35
 """.strip()
 
 VALID_MANAGER_CONFIG = """
@@ -51,8 +46,23 @@ default_assigned_by_name = "Алексей Пелин"
 22 = "Алексей Пелин"
 """.strip()
 
-VALID_PATHS_CONFIG = """
+VALID_EXTRACT_CONFIG = """
+[extract.nashdom]
+objects_to_parse_count = 35
+element_wait_timeout_seconds = 60.0
+navigation_max_attempts = 3
+navigation_retry_delay_seconds = 10.0
+""".strip()
+
+VALID_BROWSER_CONFIG = """
 [browser]
+headless = false
+page_load_timeout_seconds = 120.0
+script_timeout_seconds = 60.0
+page_load_strategy = "eager"
+disable_images = true
+window_width = 1280
+window_height = 720
 browser_path = "drivers/chrome/chrome-win/chrome.exe"
 driver_path = "drivers/chrome/chromedriver_win32/chromedriver.exe"
 """.strip()
@@ -76,7 +86,8 @@ name = "Алтайский край"
 def _provider(
     tmp_path: Path,
     app_config: Optional[Union[str, bytes]] = VALID_APP_CONFIG,
-    paths_config: Optional[Union[str, bytes]] = VALID_PATHS_CONFIG,
+    browser_config: Optional[Union[str, bytes]] = VALID_BROWSER_CONFIG,
+    extract_config: Optional[Union[str, bytes]] = VALID_EXTRACT_CONFIG,
     manager_config: Optional[Union[str, bytes]] = VALID_MANAGER_CONFIG,
     region_catalog: Optional[Union[str, bytes]] = VALID_REGION_CATALOG,
     execution_config: Optional[Union[str, bytes]] = VALID_EXECUTION_CONFIG,
@@ -93,12 +104,12 @@ def _provider(
             app_config_path.write_bytes(app_config)
         else:
             app_config_path.write_text(app_config, encoding="utf-8")
-    if paths_config is not None:
-        paths_config_path = program_data_root / "sync.paths.toml"
-        if isinstance(paths_config, bytes):
-            paths_config_path.write_bytes(paths_config)
+    if browser_config is not None:
+        browser_config_path = program_data_root / "sync.browser.toml"
+        if isinstance(browser_config, bytes):
+            browser_config_path.write_bytes(browser_config)
         else:
-            paths_config_path.write_text(paths_config, encoding="utf-8")
+            browser_config_path.write_text(browser_config, encoding="utf-8")
     if manager_config is not None:
         manager_config_path = program_data_root / "sync.manager-region.toml"
         if isinstance(manager_config, bytes):
@@ -118,6 +129,13 @@ def _provider(
             execution_path.write_bytes(execution_config)
         else:
             execution_path.write_text(execution_config, encoding="utf-8")
+
+    if extract_config is not None:
+        extract_path = program_data_root / "sync.extract.toml"
+        if isinstance(extract_config, bytes):
+            extract_path.write_bytes(extract_config)
+        else:
+            extract_path.write_text(extract_config, encoding="utf-8")
 
     paths = RuntimePaths(
         repo_root=repo_root,
@@ -241,11 +259,11 @@ def test_provide_requires_positive_objects_to_parse_count(
     tmp_path: Path,
     objects_to_parse_count: int,
 ) -> None:
-    app_config = VALID_APP_CONFIG.replace(
+    extract_config = VALID_EXTRACT_CONFIG.replace(
         "objects_to_parse_count = 35",
         f"objects_to_parse_count = {objects_to_parse_count}",
     )
-    provider, _ = _provider(tmp_path, app_config=app_config)
+    provider, _ = _provider(tmp_path, extract_config=extract_config)
 
     with pytest.raises(ConfigurationError) as exc_info:
         provider.provide()
@@ -277,11 +295,11 @@ def test_provide_rejects_non_numeric_assignment_key(tmp_path: Path) -> None:
 
 
 def test_provide_rejects_raw_extract_regions(tmp_path: Path) -> None:
-    app_config = VALID_APP_CONFIG.replace(
+    extract_config = VALID_EXTRACT_CONFIG.replace(
         "objects_to_parse_count = 35",
         "objects_to_parse_count = 35\nregions = []",
     )
-    provider, _ = _provider(tmp_path, app_config=app_config)
+    provider, _ = _provider(tmp_path, extract_config=extract_config)
 
     with pytest.raises(ConfigurationError) as exc_info:
         provider.provide()
@@ -292,7 +310,8 @@ def test_provide_rejects_raw_extract_regions(tmp_path: Path) -> None:
 def test_provide_rejects_overlap_without_silent_override(tmp_path: Path) -> None:
     provider, _ = _provider(
         tmp_path,
-        paths_config="""
+        app_config="[browser]\nheadless = false",
+        browser_config="""
 [browser]
 headless = true
 browser_path = "drivers/chrome.exe"
@@ -305,12 +324,18 @@ driver_path = "drivers/chromedriver.exe"
 
     assert "Параметр browser.headless определён одновременно" in str(exc_info.value)
     assert "sync.toml" in str(exc_info.value)
-    assert "sync.paths.toml" in str(exc_info.value)
+    assert "sync.browser.toml" in str(exc_info.value)
 
 
 @pytest.mark.parametrize(
     "missing_source",
-    ["sync.toml", "sync.paths.toml", "sync.region_slugs.toml", "sync.manager-region.toml", "sync.execution.toml"],
+    [
+        "sync.toml",
+        "sync.browser.toml",
+        "sync.region_slugs.toml",
+        "sync.manager-region.toml",
+        "sync.execution.toml",
+    ],
 )
 def test_provide_reports_missing_configuration_file(
     tmp_path: Path,
@@ -321,9 +346,11 @@ def test_provide_reports_missing_configuration_file(
         manager_config=None
         if missing_source == "sync.manager-region.toml"
         else VALID_MANAGER_CONFIG,
-        execution_config=None if missing_source == "sync.execution.toml" else VALID_EXECUTION_CONFIG,
+        execution_config=None
+        if missing_source == "sync.execution.toml"
+        else VALID_EXECUTION_CONFIG,
         app_config=None if missing_source == "sync.toml" else VALID_APP_CONFIG,
-        paths_config=None if missing_source == "sync.paths.toml" else VALID_PATHS_CONFIG,
+        browser_config=None if missing_source == "sync.browser.toml" else VALID_BROWSER_CONFIG,
         region_catalog=(
             None if missing_source == "sync.region_slugs.toml" else VALID_REGION_CATALOG
         ),
@@ -338,7 +365,13 @@ def test_provide_reports_missing_configuration_file(
 
 @pytest.mark.parametrize(
     "invalid_source",
-    ["sync.toml", "sync.paths.toml", "sync.region_slugs.toml", "sync.manager-region.toml", "sync.execution.toml"],
+    [
+        "sync.toml",
+        "sync.browser.toml",
+        "sync.region_slugs.toml",
+        "sync.manager-region.toml",
+        "sync.execution.toml",
+    ],
 )
 def test_provide_wraps_invalid_toml_with_parser_cause(
     tmp_path: Path,
@@ -350,9 +383,13 @@ def test_provide_wraps_invalid_toml_with_parser_cause(
         manager_config=invalid_toml
         if invalid_source == "sync.manager-region.toml"
         else VALID_MANAGER_CONFIG,
-        execution_config=invalid_toml if invalid_source == "sync.execution.toml" else VALID_EXECUTION_CONFIG,
+        execution_config=invalid_toml
+        if invalid_source == "sync.execution.toml"
+        else VALID_EXECUTION_CONFIG,
         app_config=invalid_toml if invalid_source == "sync.toml" else VALID_APP_CONFIG,
-        paths_config=(invalid_toml if invalid_source == "sync.paths.toml" else VALID_PATHS_CONFIG),
+        browser_config=(
+            invalid_toml if invalid_source == "sync.browser.toml" else VALID_BROWSER_CONFIG
+        ),
         region_catalog=(
             invalid_toml if invalid_source == "sync.region_slugs.toml" else VALID_REGION_CATALOG
         ),
@@ -368,7 +405,13 @@ def test_provide_wraps_invalid_toml_with_parser_cause(
 
 @pytest.mark.parametrize(
     "invalid_source",
-    ["sync.toml", "sync.paths.toml", "sync.region_slugs.toml", "sync.manager-region.toml", "sync.execution.toml"],
+    [
+        "sync.toml",
+        "sync.browser.toml",
+        "sync.region_slugs.toml",
+        "sync.manager-region.toml",
+        "sync.execution.toml",
+    ],
 )
 def test_provide_wraps_invalid_utf8_with_runtime_file_cause(
     tmp_path: Path,
@@ -380,9 +423,13 @@ def test_provide_wraps_invalid_utf8_with_runtime_file_cause(
         manager_config=invalid_utf8
         if invalid_source == "sync.manager-region.toml"
         else VALID_MANAGER_CONFIG,
-        execution_config=invalid_utf8 if invalid_source == "sync.execution.toml" else VALID_EXECUTION_CONFIG,
+        execution_config=invalid_utf8
+        if invalid_source == "sync.execution.toml"
+        else VALID_EXECUTION_CONFIG,
         app_config=invalid_utf8 if invalid_source == "sync.toml" else VALID_APP_CONFIG,
-        paths_config=(invalid_utf8 if invalid_source == "sync.paths.toml" else VALID_PATHS_CONFIG),
+        browser_config=(
+            invalid_utf8 if invalid_source == "sync.browser.toml" else VALID_BROWSER_CONFIG
+        ),
         region_catalog=(
             invalid_utf8 if invalid_source == "sync.region_slugs.toml" else VALID_REGION_CATALOG
         ),
@@ -401,7 +448,7 @@ def test_provide_wraps_invalid_utf8_with_runtime_file_cause(
 def test_provide_wraps_missing_required_parameter_validation(tmp_path: Path) -> None:
     provider, _ = _provider(
         tmp_path,
-        paths_config="""
+        browser_config="""
 [browser]
 browser_path = "drivers/chrome.exe"
 """.strip(),
@@ -410,8 +457,8 @@ browser_path = "drivers/chrome.exe"
     with pytest.raises(ConfigurationError) as exc_info:
         provider.provide()
 
-    assert str(exc_info.value) == (
-        "В конфигурации отсутствует обязательный параметр browser.driver_path"
+    assert "В конфигурации отсутствует обязательный параметр browser.driver_path" in str(
+        exc_info.value
     )
     assert isinstance(exc_info.value.__cause__, ValidationError)
     assert "driver_path" in str(exc_info.value)
@@ -420,7 +467,7 @@ browser_path = "drivers/chrome.exe"
 def test_provide_requires_strict_boolean(tmp_path: Path) -> None:
     provider, _ = _provider(
         tmp_path,
-        app_config=VALID_APP_CONFIG.replace("headless = false", 'headless = "false"'),
+        browser_config=VALID_BROWSER_CONFIG.replace("headless = false", 'headless = "false"'),
     )
 
     with pytest.raises(ConfigurationError) as exc_info:
@@ -433,7 +480,7 @@ def test_provide_requires_strict_boolean(tmp_path: Path) -> None:
 def test_provide_forbids_unknown_fields(tmp_path: Path) -> None:
     provider, _ = _provider(
         tmp_path,
-        app_config=VALID_APP_CONFIG.replace(
+        browser_config=VALID_BROWSER_CONFIG.replace(
             "headless = false",
             "headless = false\nheadles = false",
         ),
@@ -450,7 +497,7 @@ def test_provide_rejects_absolute_machine_path(tmp_path: Path) -> None:
     absolute_path = (tmp_path / "outside" / "chrome.exe").resolve().as_posix()
     provider, _ = _provider(
         tmp_path,
-        paths_config=f"""
+        browser_config=f"""
 [browser]
 browser_path = "{absolute_path}"
 driver_path = "drivers/chromedriver.exe"
@@ -467,7 +514,7 @@ driver_path = "drivers/chromedriver.exe"
 def test_provide_rejects_program_data_traversal(tmp_path: Path) -> None:
     provider, _ = _provider(
         tmp_path,
-        paths_config="""
+        browser_config="""
 [browser]
 browser_path = "../outside/chrome.exe"
 driver_path = "drivers/chromedriver.exe"
@@ -691,7 +738,9 @@ def test_logging_levels_match_runtime_config(tmp_path: Path, level: str) -> None
 def test_provide_execution_settings(tmp_path: Path, enabled: bool) -> None:
     provider, _ = _provider(
         tmp_path,
-        execution_config=VALID_EXECUTION_CONFIG.replace("load_enabled = true", f"load_enabled = {str(enabled).lower()}"),
+        execution_config=VALID_EXECUTION_CONFIG.replace(
+            "load_enabled = true", f"load_enabled = {str(enabled).lower()}"
+        ),
     )
     settings = provider.provide()
     assert isinstance(settings.execution, ExecutionSettings)
@@ -706,14 +755,18 @@ def test_provide_execution_settings(tmp_path: Path, enabled: bool) -> None:
 def test_provide_rejects_non_boolean_load_enabled(tmp_path: Path, value: str) -> None:
     provider, _ = _provider(
         tmp_path,
-        execution_config=VALID_EXECUTION_CONFIG.replace("load_enabled = true", f"load_enabled = {value}"),
+        execution_config=VALID_EXECUTION_CONFIG.replace(
+            "load_enabled = true", f"load_enabled = {value}"
+        ),
     )
     with pytest.raises(ConfigurationError, match="execution.load_enabled") as caught:
         provider.provide()
     assert isinstance(caught.value.__cause__, ValidationError)
 
 
-@pytest.mark.parametrize("removed", ["[execution]\nload_enabled = true\n\n", "load_enabled = true\n"])
+@pytest.mark.parametrize(
+    "removed", ["[execution]\nload_enabled = true\n\n", "load_enabled = true\n"]
+)
 def test_provide_requires_execution(tmp_path: Path, removed: str) -> None:
     provider, _ = _provider(tmp_path, execution_config=VALID_EXECUTION_CONFIG.replace(removed, ""))
     with pytest.raises(ConfigurationError, match="обязательный параметр execution") as caught:
@@ -724,16 +777,85 @@ def test_provide_requires_execution(tmp_path: Path, removed: str) -> None:
 def test_provide_forbids_unknown_execution_fields(tmp_path: Path) -> None:
     provider, _ = _provider(
         tmp_path,
-        execution_config=VALID_EXECUTION_CONFIG.replace("load_enabled = true", "load_enabled = true\nunknown = false"),
+        execution_config=VALID_EXECUTION_CONFIG.replace(
+            "load_enabled = true", "load_enabled = true\nunknown = false"
+        ),
     )
     with pytest.raises(ConfigurationError, match="неизвестный параметр execution.unknown"):
         provider.provide()
 
 
 def test_provide_rejects_execution_overlap(tmp_path: Path) -> None:
-    provider, _ = _provider(
-        tmp_path, app_config=VALID_APP_CONFIG + "\n" + VALID_EXECUTION_CONFIG
-    )
+    provider, _ = _provider(tmp_path, app_config=VALID_APP_CONFIG + "\n" + VALID_EXECUTION_CONFIG)
     with pytest.raises(ConfigurationOverlapError, match="execution.load_enabled") as caught:
         provider.provide()
     assert "sync.execution.toml" in str(caught.value)
+
+
+def test_tracked_config_and_private_sources(tmp_path: Path) -> None:
+    provider, program_data = _provider(tmp_path)
+    assert not (program_data / "sync.paths.toml").exists()
+    parsed = tomli.loads(VALID_APP_CONFIG)
+    assert "browser" not in parsed and "extract" not in parsed
+    tracked = Path(__file__).resolve().parents[3] / "config" / "sync.toml"
+    assert set(tomli.loads(tracked.read_text(encoding="utf-8"))) == {"logging", "bitrix"}
+    settings = provider.provide()
+    assert settings.browser.page_load_timeout_seconds == 120.0
+    assert settings.extract.nashdom.navigation_max_attempts == 3
+
+
+@pytest.mark.parametrize("content", [None, "[extract", b"\xff"])
+def test_private_extract_file_required(
+    tmp_path: Path, content: Optional[Union[str, bytes]]
+) -> None:
+    provider, _ = _provider(tmp_path, extract_config=content)
+    with pytest.raises(ConfigurationError, match="sync.extract.toml"):
+        provider.provide()
+
+
+@pytest.mark.parametrize(
+    "old,new,field",
+    [
+        ("120.0", "0.0", "page_load_timeout_seconds"),
+        ("120.0", '"120"', "page_load_timeout_seconds"),
+        ("120.0", "true", "page_load_timeout_seconds"),
+        ("120.0", "nan", "page_load_timeout_seconds"),
+        ("60.0", "-1.0", "script_timeout_seconds"),
+        ('"eager"', '"invalid"', "page_load_strategy"),
+        ("disable_images = true", 'disable_images = "true"', "disable_images"),
+        ("window_width = 1280", "window_width = 0", "window_width"),
+        ("window_height = 720", "window_height = -1", "window_height"),
+        ("window_width = 1280", "window_width = 1280.0", "window_width"),
+    ],
+)
+def test_browser_runtime_validation(tmp_path: Path, old: str, new: str, field: str) -> None:
+    provider, _ = _provider(tmp_path, browser_config=VALID_BROWSER_CONFIG.replace(old, new))
+    with pytest.raises(ConfigurationError, match=field):
+        provider.provide()
+
+
+@pytest.mark.parametrize(
+    "old,new,field",
+    [
+        ("60.0", "0.0", "element_wait_timeout_seconds"),
+        ("60.0", '"60"', "element_wait_timeout_seconds"),
+        ("navigation_max_attempts = 3", "navigation_max_attempts = 0", "navigation_max_attempts"),
+        (
+            "navigation_max_attempts = 3",
+            "navigation_max_attempts = true",
+            "navigation_max_attempts",
+        ),
+        ("navigation_max_attempts = 3", "navigation_max_attempts = 3.0", "navigation_max_attempts"),
+        ("10.0", "-1.0", "navigation_retry_delay_seconds"),
+        ("10.0", "inf", "navigation_retry_delay_seconds"),
+    ],
+)
+def test_extract_runtime_validation(tmp_path: Path, old: str, new: str, field: str) -> None:
+    provider, _ = _provider(tmp_path, extract_config=VALID_EXTRACT_CONFIG.replace(old, new))
+    with pytest.raises(ConfigurationError, match=field):
+        provider.provide()
+
+
+def test_zero_delay_allowed(tmp_path: Path) -> None:
+    provider, _ = _provider(tmp_path, extract_config=VALID_EXTRACT_CONFIG.replace("10.0", "0.0"))
+    assert provider.provide().extract.nashdom.navigation_retry_delay_seconds == 0.0

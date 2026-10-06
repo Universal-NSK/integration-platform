@@ -70,6 +70,9 @@ def _raw_company_group(company_group_id: int) -> Dict[str, Any]:
 
 def _settings(target_count: int) -> NashDomExtractSettings:
     return NashDomExtractSettings(
+        element_wait_timeout_seconds=60.0,
+        navigation_max_attempts=3,
+        navigation_retry_delay_seconds=10.0,
         objects_to_parse_count=target_count,
         regions=(
             NashDomRegion(
@@ -84,7 +87,12 @@ def _settings(target_count: int) -> NashDomExtractSettings:
 def _client() -> Tuple[NashDomClient, Mock]:
     driver = Mock()
     driver.current_url = "https://xn--80az8a.xn--d1aqf.xn--p1ai/"
-    return NashDomClient(cast(WebDriver, driver)), driver
+    return NashDomClient(
+        cast(WebDriver, driver),
+        element_wait_timeout_seconds=60.0,
+        navigation_max_attempts=3,
+        navigation_retry_delay_seconds=10.0,
+    ), driver
 
 
 def test_interceptor_script_returns_installation_result_to_selenium() -> None:
@@ -1086,3 +1094,95 @@ def test_company_group_failed_fallback_has_no_success_warning(
         for r in caplog.records
         if r.__dict__.get(EVENT_ATTRIBUTE) == "company_group_ssr_fallback_used"
     ]
+
+
+@pytest.fixture(autouse=True)
+def no_real_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("nashdom_sync.extract.nashdom.client.sleep", Mock())
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        TimeoutException("private timeout text"),
+        WebDriverException("net::ERR_CONNECTION_RESET secret"),
+        WebDriverException("timed out"),
+    ],
+)
+@pytest.mark.parametrize("operation", ["region", "context", "developer", "company_group"])
+def test_navigation_retry_success(
+    monkeypatch: pytest.MonkeyPatch, failure: WebDriverException, operation: str
+) -> None:
+    client, driver = _client()
+    driver.get.side_effect = [failure, None]
+    sleep_mock = Mock()
+    event = Mock()
+    monkeypatch.setattr("nashdom_sync.extract.nashdom.client.sleep", sleep_mock)
+    monkeypatch.setattr("nashdom_sync.extract.nashdom.client.log_event", event)
+    client._navigate("https://example.invalid", operation, 4)  # pyright: ignore[reportPrivateUsage]
+    assert driver.get.call_count == 2
+    driver.execute_script.assert_called_once_with("window.stop();")
+    sleep_mock.assert_called_once_with(10.0)
+    assert event.call_args.args[2] == "nashdom_navigation_retry"
+    assert event.call_args.kwargs == {
+        "operation": operation,
+        "attempt": 1,
+        "max_attempts": 3,
+        "retry_delay_seconds": 10.0,
+        "reason": "network" if "net::ERR_" in str(failure) else "timeout",
+        "numeric_id": 4,
+    }
+    assert "secret" not in str(event.call_args)
+
+
+@pytest.mark.parametrize("stop_fails", [False, True])
+def test_navigation_exhausted(monkeypatch: pytest.MonkeyPatch, stop_fails: bool) -> None:
+    client, driver = _client()
+    primary = TimeoutException("primary")
+    driver.get.side_effect = primary
+    if stop_fails:
+        driver.execute_script.side_effect = WebDriverException("stop failed")
+    sleep_mock = Mock()
+    monkeypatch.setattr("nashdom_sync.extract.nashdom.client.sleep", sleep_mock)
+    with pytest.raises(NashDomUnavailableError, match="исчерпано попыток: 3") as error:
+        client._navigate("https://example.invalid", "region", 4)  # pyright: ignore[reportPrivateUsage]
+    assert error.value.__cause__ is primary
+    assert driver.get.call_count == 3
+    assert sleep_mock.call_count == 2
+    assert all(call.args == (10.0,) for call in sleep_mock.call_args_list)
+
+
+def test_navigation_unknown_error_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    client, driver = _client()
+    primary = WebDriverException("invalid session id")
+    driver.get.side_effect = primary
+    sleep_mock = Mock()
+    monkeypatch.setattr("nashdom_sync.extract.nashdom.client.sleep", sleep_mock)
+    with pytest.raises(NashDomClientError) as error:
+        client._navigate("https://example.invalid", "region", 4)  # pyright: ignore[reportPrivateUsage]
+    assert error.value.__cause__ is primary
+    driver.get.assert_called_once()
+    driver.execute_script.assert_not_called()
+    sleep_mock.assert_not_called()
+
+
+def test_challenge_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    client, driver = _client()
+    driver.title = "проверка браузера"
+    driver.page_source = "captcha-container"
+    sleep_mock = Mock()
+    monkeypatch.setattr("nashdom_sync.extract.nashdom.client.sleep", sleep_mock)
+    with pytest.raises(NashDomUnavailableError, match="challenge"):
+        client._open_region(_settings(1).regions[0])  # pyright: ignore[reportPrivateUsage]
+    driver.get.assert_called_once()
+    sleep_mock.assert_not_called()
+
+
+def test_configured_element_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    client, _ = _client()
+    wait = Mock()
+    wait.return_value.until.side_effect = TimeoutException()
+    monkeypatch.setattr("nashdom_sync.extract.nashdom.client.WebDriverWait", wait)
+    with pytest.raises(NashDomClientError, match="__NEXT_DATA__"):
+        client._read_ssr_objects()  # pyright: ignore[reportPrivateUsage]
+    assert wait.call_args.args[1] == 60.0
