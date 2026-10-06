@@ -210,6 +210,7 @@ def test_happy_path(run: Run) -> None:
     for stage in ("INITIALIZATION", "CRM_CONTEXT", "EXTRACT", "TRANSFORM", "LOAD"):
         expected.extend([("stage_started", stage), ("stage_completed", stage)])
     expected.append(("sync_completed", "LOAD"))
+    expected.insert(4, ("crm_context_source", "CRM_CONTEXT"))
     assert run.events == expected
     assert [call.args[0] for call in run.store.mark_stage.call_args_list] == [
         RunStage.CRM_CONTEXT,
@@ -677,9 +678,82 @@ def test_load_disabled_runs_through_transform(run: Run) -> None:
     for stage in ("INITIALIZATION", "CRM_CONTEXT", "EXTRACT", "TRANSFORM"):
         expected.extend([("stage_started", stage), ("stage_completed", stage)])
     expected.extend([("load_skipped", "TRANSFORM"), ("sync_completed", "TRANSFORM")])
+    expected.insert(4, ("crm_context_source", "CRM_CONTEXT"))
     assert run.events == expected
     lines = run.log().splitlines()
     skipped = next(line for line in lines if "load_skipped" in line)
     assert "reason=disabled_by_configuration" in skipped
     assert "INFO" in skipped
     assert "stage=LOAD" not in run.log()
+
+
+@pytest.mark.parametrize("enabled, cache_state", [
+    (False, "valid"), (False, "missing"), (False, "invalid"),
+    (True, "valid"), (True, "invalid"),
+])
+def test_crm_cache_policy(
+    run: Run, monkeypatch: pytest.MonkeyPatch, enabled: bool, cache_state: str
+) -> None:
+    from nashdom_sync.providers.crm_context_cache import CrmContextCache, CrmContextCacheError
+    from nashdom_sync.run_artifacts.serialization import encode
+
+    data = run.settings.dict()
+    data["execution"] = {"load_enabled": enabled}
+    run.settings = SyncSettings.parse_obj(data)
+    run.constructors["SettingsProvider"].return_value.provide.return_value = run.settings
+    path = run.paths.program_data_file("crm_context.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    expected = context()
+    if cache_state != "missing":
+        path.write_text(
+            json.dumps({"schema_version": 1, "data": encode(expected)})
+            if cache_state == "valid" else "SECRET_PAYLOAD",
+            encoding="utf-8",
+        )
+    cache = CrmContextCache(path)
+    spy = Mock(wraps=cache)
+    constructor = Mock(return_value=spy)
+    monkeypatch.setattr(module, "CrmContextCache", constructor)
+    provider = run.constructors["CrmProvider"].return_value.provide
+    if not enabled and cache_state == "invalid":
+        with pytest.raises(CrmContextCacheError) as caught:
+            run.execute()
+        assert_failed(run, "CRM_CONTEXT", caught.value)
+        assert caught.value.__cause__ is not None
+        assert "SECRET_PAYLOAD" not in str(caught.value)
+        assert "SECRET_PAYLOAD" not in run.log()
+        provider.assert_not_called()
+        spy.load.assert_called_once_with()
+        run.store.save_crm_context.assert_not_called()
+        return
+    run.execute()
+    constructor.assert_called_once_with(path)
+    if enabled:
+        spy.exists.assert_not_called()
+        spy.load.assert_not_called()
+    else:
+        spy.exists.assert_called_once_with()
+    if not enabled and cache_state == "valid":
+        spy.load.assert_called_once_with()
+        provider.assert_not_called()
+        chosen = expected
+        assert "source=cache" in run.log()
+        assert "crm_provider_started" not in run.log()
+        assert "crm_provider_completed" not in run.log()
+    else:
+        spy.load.assert_not_called()
+        provider.assert_called_once_with(run.settings.region)
+        chosen = provider.return_value
+        assert "source=api" in run.log()
+    run.store.save_crm_context.assert_called_once_with(chosen)
+    assert RunArtifactStore(run.directory, Mock()).load_crm_context() == chosen
+    envelope = json.loads((run.directory / "crm_context.json").read_text(encoding="utf-8"))
+    assert envelope == {"schema_version": 1, "data": encode(chosen)}
+    run.constructors["ExtractService"].return_value.extract.assert_called_once()
+    run.constructors["TransformService"].return_value.transform.assert_called_once_with(
+        run.constructors["ExtractService"].return_value.extract.return_value,
+        chosen, run.settings.region,
+    )
+    assert run.manifest()["status"] == "COMPLETED"
+    assert run.manifest()["stage"] == ("LOAD" if enabled else "TRANSFORM")
+    assert ("crm_context_source", "CRM_CONTEXT") in run.events

@@ -237,3 +237,22 @@ DOM/JSON/contract errors, отсутствие __NEXT_DATA__, challenge и не�
 WebDriver errors не повторяются. После transient failure выполняется best-effort
 window.stop(); WARNING nashdom_navigation_retry содержит только безопасные metadata.
 Transform/Load и fetch/XHR не повторяются.
+
+## Необязательный тестовый кеш CRM context
+
+`C:\ProgramData\Universal\IntegrationPlatform\crm_context.json` — приватный
+OPTIONAL test cache. Можно взять `crm_context.json` из успешного запуска и
+скопировать в корень ProgramData. Путь определяется через
+`paths.program_data_file("crm_context.json")`; отдельной настройки нет.
+
+Кеш используется только при `execution.load_enabled=false`. При `true` он
+игнорируется и context всегда загружается из CRM API. Удаление файла заставляет
+следующий тестовый запуск загрузить актуальный context из CRM.
+
+Формат совпадает с артефактом запуска: `{"schema_version": 1, "data": {...}}`.
+Конверт и DTO проверяются общим reader; текущий запуск получает новый артефакт
+через `RunArtifactStore.save_crm_context()`, а не копирование байтов.
+Повреждённый или несовместимый кеш завершает запуск на `CRM_CONTEXT` без
+автоматического перехода к API. Кеш может устареть и предназначен только для
+тестовых прогонов Extract/Transform без Load. Событие INFO `crm_context_source`
+содержит `source=cache` или `source=api`, без содержимого кеша и полного пути.

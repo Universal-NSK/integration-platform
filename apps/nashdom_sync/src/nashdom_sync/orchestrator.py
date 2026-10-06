@@ -11,6 +11,7 @@ from runtime_files import RuntimePaths
 from nashdom_sync.extract import ExtractService
 from nashdom_sync.load import LoadIncompleteError, LoadService
 from nashdom_sync.providers.browser_provider import BrowserProvider
+from nashdom_sync.providers.crm_context_cache import CrmContextCache
 from nashdom_sync.providers.crm_provider import CrmProvider
 from nashdom_sync.providers.settings_provider import SettingsProvider
 from nashdom_sync.run_artifacts import RunArtifactStore, RunStage
@@ -87,7 +88,22 @@ class SyncOrchestrator:
             stage_started = perf_counter()
             artifacts.mark_stage(current_stage)
             emit("stage_started", stage_started)
-            crm_context = crm_provider.provide(settings.region)
+            cache = CrmContextCache(paths.program_data_file("crm_context.json"))
+            if not settings.execution.load_enabled and cache.exists():
+                crm_context = cache.load()
+                context_source = "cache"
+            else:
+                crm_context = crm_provider.provide(settings.region)
+                context_source = "api"
+            log_event(
+                logger,
+                logging.INFO,
+                "crm_context_source",
+                run_id=run_dir.name,
+                stage=current_stage.value,
+                duration_seconds=perf_counter() - stage_started,
+                source=context_source,
+            )
             artifacts.save_crm_context(crm_context)
             emit("stage_completed", stage_started)
 

@@ -6,7 +6,7 @@ import tempfile
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional, Type, TypeVar, cast
+from typing import Any, Optional, Type, TypeVar
 
 from nashdom_sync.contracts.crm import CrmContext
 from nashdom_sync.contracts.extract import ExtractResult
@@ -14,6 +14,7 @@ from nashdom_sync.contracts.load import LoadResult
 from nashdom_sync.contracts.transform import SyncPlan
 from nashdom_sync.run_artifacts.contracts import RunManifest, RunStage, RunStatus
 from nashdom_sync.run_artifacts.exceptions import RunArtifactError
+from nashdom_sync.run_artifacts.reader import read_typed_artifact
 from nashdom_sync.run_artifacts.serialization import decode, encode
 
 T = TypeVar("T")
@@ -21,10 +22,6 @@ T = TypeVar("T")
 
 def _current_time() -> datetime:
     return datetime.now().astimezone()
-
-
-def _reject_constant(value: str) -> None:
-    raise ValueError("Нечисловые константы JSON запрещены")
 
 
 class RunArtifactStore:
@@ -128,18 +125,7 @@ class RunArtifactStore:
 
     def _load(self, name: str, model: Type[T]) -> T:
         try:
-            with (self._run_dir / name).open("r", encoding="utf-8") as stream:
-                raw: Any = json.load(stream, parse_constant=_reject_constant)
-            if not isinstance(raw, dict):
-                raise ValueError("Ожидался JSON-конверт артефакта")
-            envelope = cast(Dict[str, Any], raw)
-            if (
-                set(envelope) != {"schema_version", "data"}
-                or type(envelope["schema_version"]) is not int
-                or envelope["schema_version"] != 1
-            ):
-                raise ValueError("Неподдерживаемая схема артефакта")
-            return decode(model, envelope["data"])
+            return read_typed_artifact(self._run_dir / name, model)
         except Exception as exc:
             raise RunArtifactError(f"Не удалось прочитать артефакт {name}") from exc
 
