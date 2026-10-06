@@ -1,6 +1,7 @@
 import logging
+from functools import partial
 from typing import Any, Dict, List, Tuple, cast
-from unittest.mock import Mock
+from unittest.mock import Mock, PropertyMock
 
 import pytest
 from nashdom_sync.contracts import (
@@ -9,6 +10,7 @@ from nashdom_sync.contracts import (
     NashDomRegion,
 )
 from nashdom_sync.extract import (
+    BrowserSessionUnavailableError,
     NashDomClientError,
     NashDomUnavailableError,
     SourceDataValidationError,
@@ -24,8 +26,15 @@ from nashdom_sync.extract.nashdom.client import (
     _DeveloperApiBatch,  # pyright: ignore[reportPrivateUsage]
 )
 from platform_logging.formatter import DETAILS_ATTRIBUTE, EVENT_ATTRIBUTE
-from selenium.common.exceptions import TimeoutException, WebDriverException
+from selenium.common.exceptions import (
+    InvalidSessionIdException,
+    TimeoutException,
+    WebDriverException,
+)
 from selenium.webdriver.remote.webdriver import WebDriver
+from urllib3.connection import HTTPConnection
+from urllib3.connectionpool import HTTPConnectionPool
+from urllib3.exceptions import MaxRetryError, NewConnectionError, ReadTimeoutError
 
 
 def _raw_object(object_id: int) -> Dict[str, Any]:
@@ -1154,7 +1163,7 @@ def test_navigation_exhausted(monkeypatch: pytest.MonkeyPatch, stop_fails: bool)
 
 def test_navigation_unknown_error_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
     client, driver = _client()
-    primary = WebDriverException("invalid session id")
+    primary = WebDriverException("unknown command failure")
     driver.get.side_effect = primary
     sleep_mock = Mock()
     monkeypatch.setattr("nashdom_sync.extract.nashdom.client.sleep", sleep_mock)
@@ -1186,3 +1195,147 @@ def test_configured_element_wait(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(NashDomClientError, match="__NEXT_DATA__"):
         client._read_ssr_objects()  # pyright: ignore[reportPrivateUsage]
     assert wait.call_args.args[1] == 60.0
+
+
+@pytest.mark.parametrize(
+    "raw_id,accepted",
+    [
+        (138, True),
+        ("138", True),
+        ("0138", True),
+        (True, False),
+        ("abc", False),
+        (139, False),
+        (138.0, False),
+    ],
+)
+def test_developer_route_id_uses_shared_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+    raw_id: object,
+    accepted: bool,
+) -> None:
+    client, _ = _client()
+    raw = _raw_developer(138)
+    monkeypatch.setattr(client, "_open_developer_detail", Mock())
+    monkeypatch.setattr(
+        client,
+        "_read_developer_next_data",
+        Mock(
+            return_value={
+                "props": {
+                    "pageProps": {"id": raw_id},
+                    "initialState": {"erz": {"builder": {"builder": raw}}},
+                },
+            }
+        ),
+    )
+    if accepted:
+        assert client._read_detail_developer(138) == raw  # pyright: ignore[reportPrivateUsage]
+    else:
+        with pytest.raises(NashDomClientError, match="props.pageProps.id"):
+            client._read_detail_developer(138)  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ReadTimeoutError(HTTPConnectionPool("localhost", 12345), "/session", "SECRET timeout"),
+        NewConnectionError(HTTPConnection("127.0.0.1", 12345), "SECRET refused"),
+        MaxRetryError(
+            HTTPConnectionPool("localhost", 12345),
+            "/session",
+            NewConnectionError(HTTPConnection("localhost", 12345), "SECRET refused"),
+        ),
+        InvalidSessionIdException(),
+        *[
+            WebDriverException(message + " SECRET")
+            for message in (
+                "invalid session id",
+                "chrome not reachable",
+                "disconnected",
+                "not connected to DevTools",
+                "session deleted because of page crash",
+                "tab crashed",
+            )
+        ],
+    ],
+)
+@pytest.mark.parametrize("operation", ["get", "async", "script", "property", "wait", "attribute"])
+def test_session_failure_across_driver_commands(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+    operation: str,
+) -> None:
+    client, driver = _client()
+    event, pause = Mock(), Mock()
+    monkeypatch.setattr("nashdom_sync.extract.nashdom.client.log_event", event)
+    monkeypatch.setattr("nashdom_sync.extract.nashdom.client.sleep", pause)
+    if operation == "get":
+        driver.get.side_effect = failure
+        action = partial(client._navigate, "https://example.invalid", "region", 22)  # pyright: ignore[reportPrivateUsage]
+    elif operation == "async":
+        driver.execute_async_script.side_effect = failure
+        action = partial(client.get_developers, {138})
+    elif operation == "script":
+        driver.execute_script.side_effect = failure
+        action = client._install_interceptor  # pyright: ignore[reportPrivateUsage]
+    elif operation == "property":
+        monkeypatch.setattr(
+            type(driver), "current_url", PropertyMock(side_effect=failure), raising=False
+        )
+        action = partial(client.get_developers, {138})
+    else:
+        if operation == "wait":
+            driver.find_element.side_effect = failure
+        else:
+            driver.find_element.return_value.get_attribute.side_effect = failure
+        action = client._read_ssr_objects  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(BrowserSessionUnavailableError) as caught:
+        action()
+    assert caught.value.__cause__ is failure
+    assert "SECRET" not in str(caught.value)
+    event.assert_not_called()
+    pause.assert_not_called()
+
+
+def test_remote_http_timeout_is_not_a_session_failure() -> None:
+    client, driver = _client()
+    failure = ReadTimeoutError(HTTPConnectionPool("example.invalid", 443), "/", "timeout")
+    driver.get.side_effect = failure
+    with pytest.raises(ReadTimeoutError) as caught:
+        client._navigate("https://example.invalid", "region", 22)  # pyright: ignore[reportPrivateUsage]
+    assert caught.value is failure
+    assert driver.get.call_count == 1
+
+
+def test_dead_session_during_window_stop_is_not_swallowed() -> None:
+    client, driver = _client()
+    driver.get.side_effect = TimeoutException()
+    driver.execute_script.side_effect = WebDriverException("invalid session id")
+    with pytest.raises(BrowserSessionUnavailableError):
+        client._navigate("https://example.invalid", "region", 22)  # pyright: ignore[reportPrivateUsage]
+    assert driver.get.call_count == 1
+
+
+@pytest.mark.parametrize("count", [0, 1, 20])
+def test_region_telemetry_includes_only_safe_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    count: int,
+) -> None:
+    client, _ = _client()
+    event = Mock()
+    monkeypatch.setattr("nashdom_sync.extract.nashdom.client.log_event", event)
+    monkeypatch.setattr(
+        "nashdom_sync.extract.nashdom.client.perf_counter", Mock(side_effect=[10.0, 13.5])
+    )
+    monkeypatch.setattr(client, "_open_region", Mock())
+    monkeypatch.setattr(
+        client, "_read_ssr_objects", Mock(return_value=[_raw_object(i + 1) for i in range(count)])
+    )
+    monkeypatch.setattr(client, "_find_load_more_locator", Mock(return_value=None))
+    assert len(client.get_objects(_settings(20))) == count
+    event.assert_called_once()
+    assert event.call_args.args[2] == "nashdom_region_extracted"
+    assert event.call_args.kwargs == dict(
+        region_code=22, objects_received=count, duration_seconds=3.5
+    )

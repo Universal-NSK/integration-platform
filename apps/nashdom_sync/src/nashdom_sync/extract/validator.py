@@ -42,6 +42,13 @@ class SourceDataValidator:
                 f"NashDom вернул объекты из незапрошенных регионов: {formatted_ids}"
             )
 
+        missing_region_ids = expected_region_ids - {item.region_id for item in objects}
+        if missing_region_ids:
+            formatted_ids = ", ".join(str(code) for code in sorted(missing_region_ids))
+            raise SourceDataValidationError(
+                f"NashDom не вернул объекты для запрошенных регионов: {formatted_ids}"
+            )
+
     def validate_developers(
         self,
         developers: Sequence[ExtractedDeveloper],

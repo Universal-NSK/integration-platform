@@ -207,6 +207,10 @@ page_load_strategy = "eager"
 disable_images = true
 window_width = 1280
 window_height = 720
+launch_max_attempts = 3
+launch_retry_delay_seconds = 10.0
+extract_session_max_attempts = 2
+extract_session_retry_delay_seconds = 10.0
 ```
 
 `sync.extract.toml`:
@@ -229,14 +233,52 @@ Chrome получает --disable-background-networking, --disable-component-upd
 --disable-default-apps, --disable-extensions, --disable-sync, --no-first-run;
 --headless=new добавляется только при headless=true.
 
-Все WebDriverWait используют element_wait_timeout_seconds. Retry выполняется только
-для driver.get (регион, browser-context, developer detail, company-group detail):
+Все WebDriverWait используют element_wait_timeout_seconds. Восстановление разделено
+на три уровня; SettingsProvider только загружает и валидирует policy:
+
+1. BrowserProvider: `launch_max_attempts=3` — всего три попытки создать готовый
+   WebDriver, включая настройку page/script timeout. Каждая попытка создаёт новый
+   Service. При ошибке driver.quit/service.stop выполняются best-effort, без
+   глобального завершения процессов. Последняя ошибка становится BrowserLaunchError
+   с исходной cause. `launch_retry_delay_seconds=10.0` — пауза только между попытками.
+   События: `browser_launch_retry` (безопасная категория) и `browser_started`
+   (номер успешной попытки и длительность).
+2. NashDomClient: navigation retry для driver.get
+   (регион, browser-context, developer detail, company-group detail):
 3 — общее число попыток, включая первую, с 10 секундами между попытками.
 Повторяются TimeoutException и WebDriverException с net::ERR_*, timed out/timeout.
 DOM/JSON/contract errors, отсутствие __NEXT_DATA__, challenge и неизвестные
 WebDriver errors не повторяются. После transient failure выполняется best-effort
 window.stop(); WARNING nashdom_navigation_retry содержит только безопасные metadata.
-Transform/Load и fetch/XHR не повторяются.
+3. SyncOrchestrator: `extract_session_max_attempts=2` — максимум две сессии для
+   EXTRACT, исходная и один полный повтор с новым WebDriver, только при
+   BrowserSessionUnavailableError. NashDomClient классифицирует локальные
+   localhost/127.0.0.1/::1 ReadTimeoutError, NewConnectionError и MaxRetryError
+   с connection/timeout/protocol cause, а также явные Selenium сообщения:
+   invalid session id, chrome not reachable, disconnected, not connected to DevTools,
+   session deleted because of page crash, tab crashed. TimeoutException и net::ERR_*
+   сохраняют navigation semantics. Неизвестные WebDriver errors, DOM/JSON и challenge
+   не запускают новую сессию. `extract_session_retry_delay_seconds=10.0` применяется
+   только между сессиями; событие `browser_session_restart` указывает номер следующей.
+   Сначала выполняется best-effort quit; ошибка cleanup не маскирует ошибку Extract.
+   После успешного Extract обычная ошибка quit остаётся ошибкой запуска.
+   CRM_CONTEXT читается один раз; Transform/Load выполняются после успешного Extract.
+   Частичные результаты не сохраняются. Исчерпание сессий даёт FAILED / EXTRACT.
+
+Новые четыре browser-поля обязательны без defaults: attempts — StrictInt >= 1,
+delays — конечные StrictFloat >= 0; неизвестные поля запрещены. Добавьте их в
+существующий private файл перед запуском. Timeout значения 120/60/60 не меняются.
+ExtractService остаётся координатором объектов, застройщиков, групп и валидации.
+Отдельного region/fetch/XHR retry нет; при смерти сессии повторяется весь Extract.
+
+Developer `props.pageProps.id` использует общий route helper: int и numeric string
+эквивалентны (включая ведущие нули); bool, float и несовпадающий ID отклоняются.
+SourceDataValidator требует хотя бы один объект для каждого запрошенного региона,
+сохраняя duplicate/unexpected проверки; меньший размер региона допустим. Пустой
+запрошенный регион вызывает SourceDataValidationError, без retry.
+После полного извлечения каждого региона NashDomClient пишет
+`nashdom_region_extracted`: region_code, objects_received (включая 0), duration_seconds
+от navigation до normalization. Новые события не содержат URL, payload и тексты ошибок.
 
 ## Необязательный тестовый кеш CRM context
 

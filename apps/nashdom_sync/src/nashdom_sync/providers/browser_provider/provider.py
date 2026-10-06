@@ -1,7 +1,10 @@
-from typing import Protocol, cast
+import logging
+from contextlib import suppress
+from time import perf_counter, sleep
+from typing import Optional, Protocol, cast
 
+from platform_logging import log_event
 from selenium import webdriver
-from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.remote.webdriver import WebDriver
@@ -12,6 +15,8 @@ from nashdom_sync.providers.browser_provider.exceptions import (
     BrowserLaunchError,
     DriverBinaryNotFoundError,
 )
+
+logger = logging.getLogger(__name__)
 
 _BACKGROUND_ARGUMENTS = (
     "--disable-background-networking",
@@ -45,23 +50,46 @@ class BrowserProvider:
             raise DriverBinaryNotFoundError(settings.driver_path)
 
         options = self._build_options(settings)
-        service = Service(executable_path=str(settings.driver_path))
-
-        try:
-            driver = webdriver.Chrome(service=service, options=options)
-        except WebDriverException as exc:
-            raise BrowserLaunchError(settings.browser_path, settings.driver_path) from exc
-
-        try:
-            driver.set_page_load_timeout(settings.page_load_timeout_seconds)
-            driver.set_script_timeout(settings.script_timeout_seconds)
-        except Exception as exc:
+        for attempt in range(1, settings.launch_max_attempts + 1):
+            started = perf_counter()
+            driver: Optional[WebDriver] = None
+            service: Optional[Service] = None
+            reason = "creation_failed"
             try:
-                driver.quit()
-            except Exception:
-                pass
-            raise BrowserLaunchError(settings.browser_path, settings.driver_path) from exc
-        return driver
+                service = Service(executable_path=str(settings.driver_path))
+                driver = webdriver.Chrome(service=service, options=options)
+                reason = "timeout_configuration_failed"
+                driver.set_page_load_timeout(settings.page_load_timeout_seconds)
+                driver.set_script_timeout(settings.script_timeout_seconds)
+            except Exception as exc:
+                if driver is not None:
+                    with suppress(Exception):
+                        driver.quit()
+                if service is not None:
+                    with suppress(Exception):
+                        service.stop()
+                if attempt == settings.launch_max_attempts:
+                    raise BrowserLaunchError(settings.browser_path, settings.driver_path) from exc
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "browser_launch_retry",
+                    attempt=attempt,
+                    max_attempts=settings.launch_max_attempts,
+                    retry_delay_seconds=settings.launch_retry_delay_seconds,
+                    reason=reason,
+                )
+                sleep(settings.launch_retry_delay_seconds)
+            else:
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "browser_started",
+                    attempt=attempt,
+                    duration_seconds=perf_counter() - started,
+                )
+                return driver
+        raise AssertionError("Validated launch attempts must be positive")
 
     @staticmethod
     def _build_options(settings: BrowserSettings) -> Options:

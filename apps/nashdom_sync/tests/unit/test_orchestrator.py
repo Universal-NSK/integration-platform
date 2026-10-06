@@ -20,7 +20,12 @@ from nashdom_sync.contracts.transform import (
     SyncPlan,
     TransformResult,
 )
-from nashdom_sync.extract import ExtractError
+from nashdom_sync.extract import (
+    BrowserSessionUnavailableError,
+    ExtractError,
+    NashDomClientError,
+    SourceDataValidationError,
+)
 from nashdom_sync.load import LoadIncompleteError, LoadService
 from nashdom_sync.load import service as load_module
 from nashdom_sync.providers.browser_provider import (
@@ -83,6 +88,10 @@ def run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Run]:
                 "disable_images": True,
                 "window_width": 1280,
                 "window_height": 720,
+                "launch_max_attempts": 3,
+                "launch_retry_delay_seconds": 10.0,
+                "extract_session_max_attempts": 2,
+                "extract_session_retry_delay_seconds": 10.0,
                 "browser_path": tmp_path / "chrome.exe",
                 "driver_path": tmp_path / "driver.exe",
             },
@@ -757,3 +766,131 @@ def test_crm_cache_policy(
     assert run.manifest()["status"] == "COMPLETED"
     assert run.manifest()["stage"] == ("LOAD" if enabled else "TRANSFORM")
     assert ("crm_context_source", "CRM_CONTEXT") in run.events
+
+@pytest.mark.parametrize("use_cache", [False, True])
+def test_extract_session_restart(
+    run: Run, monkeypatch: pytest.MonkeyPatch, use_cache: bool
+) -> None:
+    second = Mock()
+    provide = run.constructors["BrowserProvider"].return_value.provide
+    provide.side_effect = [run.driver, second]
+    run.driver.quit.side_effect = RuntimeError("SECRET cleanup")
+    pause = Mock()
+    monkeypatch.setattr(module, "sleep", pause)
+    cache = Mock()
+    cache.exists.return_value = True
+    cache.load.return_value = context()
+    if use_cache:
+        data = run.settings.dict()
+        data["execution"] = {"load_enabled": False}
+        run.settings = SyncSettings.parse_obj(data)
+        run.constructors["SettingsProvider"].return_value.provide.return_value = run.settings
+        monkeypatch.setattr(module, "CrmContextCache", Mock(return_value=cache))
+    calls: List[Mock] = []
+
+    def extract(driver: Any, settings: Any) -> Any:
+        assert settings is run.settings.extract
+        assert run.manifest()["stage"] == "EXTRACT"
+        assert not (run.directory / "extract_result.json").exists()
+        run.store.save_extract_result.assert_not_called()
+        run.constructors["TransformService"].return_value.transform.assert_not_called()
+        run.constructors["LoadService"].return_value.load.assert_not_called()
+        calls.append(driver)
+        if len(calls) == 1:
+            raise BrowserSessionUnavailableError("SECRET failed session")
+        return source()
+
+    extract_mock = run.constructors["ExtractService"].return_value.extract
+    extract_mock.side_effect = extract
+    run.execute()
+    assert calls == [run.driver, second]
+    assert provide.call_count == extract_mock.call_count == 2
+    run.driver.quit.assert_called_once_with()
+    second.quit.assert_called_once_with()
+    pause.assert_called_once_with(10.0)
+    run.store.save_extract_result.assert_called_once_with(source())
+    run.constructors["TransformService"].return_value.transform.assert_called_once()
+    if use_cache:
+        cache.exists.assert_called_once_with()
+        cache.load.assert_called_once_with()
+        run.constructors["CrmProvider"].return_value.provide.assert_not_called()
+        run.constructors["LoadService"].assert_not_called()
+    else:
+        run.constructors["CrmProvider"].return_value.provide.assert_called_once()
+        run.constructors["LoadService"].return_value.load.assert_called_once()
+    assert run.events.count(("browser_session_restart", "EXTRACT")) == 1
+    restart_line = next(line for line in run.log().splitlines() if "browser_session_restart" in line)
+    for field in ("attempt=2", "max_attempts=2", "retry_delay_seconds=10.0", "reason=browser_session_unavailable"):
+        assert field in restart_line
+    assert "SECRET" not in run.log()
+    assert run.manifest()["status"] == "COMPLETED"
+
+
+def test_session_attempts_exhausted(run: Run, monkeypatch: pytest.MonkeyPatch) -> None:
+    second = Mock()
+    provide = run.constructors["BrowserProvider"].return_value.provide
+    provide.side_effect = [run.driver, second]
+    first_error = BrowserSessionUnavailableError("first")
+    last_error = BrowserSessionUnavailableError("last")
+    run.constructors["ExtractService"].return_value.extract.side_effect = [first_error, last_error]
+    second.quit.side_effect = RuntimeError("cleanup")
+    pause = Mock()
+    monkeypatch.setattr(module, "sleep", pause)
+    with pytest.raises(BrowserSessionUnavailableError) as caught:
+        run.execute()
+    assert caught.value is last_error
+    assert_failed(run, "EXTRACT", last_error)
+    assert provide.call_count == 2
+    run.driver.quit.assert_called_once_with()
+    second.quit.assert_called_once_with()
+    pause.assert_called_once_with(10.0)
+    run.constructors["TransformService"].return_value.transform.assert_not_called()
+    run.constructors["LoadService"].return_value.load.assert_not_called()
+    run.store.save_extract_result.assert_not_called()
+    assert not (run.directory / "extract_result.json").exists()
+    assert run.events.count(("browser_session_restart", "EXTRACT")) == 1
+
+
+@pytest.mark.parametrize(
+    "error", [NashDomClientError("contract"), SourceDataValidationError("missing region")]
+)
+def test_domain_failure_never_restarts_session(run: Run, error: Exception) -> None:
+    run.constructors["ExtractService"].return_value.extract.side_effect = error
+    with pytest.raises(type(error)) as caught:
+        run.execute()
+    assert caught.value is error
+    assert_failed(run, "EXTRACT", error)
+    run.constructors["BrowserProvider"].return_value.provide.assert_called_once()
+    assert ("browser_session_restart", "EXTRACT") not in run.events
+
+
+def test_launch_failure_is_not_retried_by_orchestrator(run: Run) -> None:
+    error = BrowserLaunchError(Path("chrome"), Path("driver"))
+    provide = run.constructors["BrowserProvider"].return_value.provide
+    provide.side_effect = error
+    with pytest.raises(BrowserLaunchError) as caught:
+        run.execute()
+    assert caught.value is error
+    provide.assert_called_once()
+    run.constructors["ExtractService"].return_value.extract.assert_not_called()
+    assert_failed(run, "EXTRACT", error)
+
+
+
+def test_one_configured_session_disables_restart(run: Run, monkeypatch: pytest.MonkeyPatch) -> None:
+    data = run.settings.dict()
+    data["browser"]["extract_session_max_attempts"] = 1
+    run.settings = SyncSettings.parse_obj(data)
+    run.constructors["SettingsProvider"].return_value.provide.return_value = run.settings
+    pause = Mock()
+    monkeypatch.setattr(module, "sleep", pause)
+    error = BrowserSessionUnavailableError("failed")
+    run.constructors["ExtractService"].return_value.extract.side_effect = error
+    with pytest.raises(BrowserSessionUnavailableError) as caught:
+        run.execute()
+    assert caught.value is error
+    run.constructors["BrowserProvider"].return_value.provide.assert_called_once()
+    run.driver.quit.assert_called_once_with()
+    pause.assert_not_called()
+    assert ("browser_session_restart", "EXTRACT") not in run.events
+    assert_failed(run, "EXTRACT", error)

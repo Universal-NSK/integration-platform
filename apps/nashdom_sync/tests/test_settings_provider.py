@@ -63,6 +63,10 @@ page_load_strategy = "eager"
 disable_images = true
 window_width = 1280
 window_height = 720
+launch_max_attempts = 3
+launch_retry_delay_seconds = 10.0
+extract_session_max_attempts = 2
+extract_session_retry_delay_seconds = 10.0
 browser_path = "drivers/chrome/chrome-win/chrome.exe"
 driver_path = "drivers/chrome/chromedriver_win32/chromedriver.exe"
 """.strip()
@@ -859,3 +863,45 @@ def test_extract_runtime_validation(tmp_path: Path, old: str, new: str, field: s
 def test_zero_delay_allowed(tmp_path: Path) -> None:
     provider, _ = _provider(tmp_path, extract_config=VALID_EXTRACT_CONFIG.replace("10.0", "0.0"))
     assert provider.provide().extract.nashdom.navigation_retry_delay_seconds == 0.0
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("launch_max_attempts", "3"),
+        ("extract_session_max_attempts", "2"),
+        ("launch_retry_delay_seconds", "10.0"),
+        ("extract_session_retry_delay_seconds", "10.0"),
+    ],
+)
+@pytest.mark.parametrize("replacement", [None, "true", '"3"', "-1", "nan", "inf", "-inf"])
+def test_required_browser_retry_policy(
+    tmp_path: Path,
+    field: str,
+    value: str,
+    replacement: Optional[str],
+) -> None:
+    line = f"{field} = {value}"
+    new = "" if replacement is None else f"{field} = {replacement}"
+    provider, _ = _provider(tmp_path, browser_config=VALID_BROWSER_CONFIG.replace(line, new))
+    with pytest.raises(ConfigurationError, match=field):
+        provider.provide()
+
+
+@pytest.mark.parametrize("field", ["launch_max_attempts", "extract_session_max_attempts"])
+@pytest.mark.parametrize("value", [0, 1.0])
+def test_browser_attempts_are_strict_positive(tmp_path: Path, field: str, value: object) -> None:
+    settings, _ = _provider(tmp_path)
+    raw = settings.provide().browser.dict()
+    raw[field] = value
+    with pytest.raises(ValidationError):
+        BrowserSettings.parse_obj(raw)
+
+
+def test_zero_browser_delays_and_unknown_policy(tmp_path: Path) -> None:
+    provider, _ = _provider(tmp_path, browser_config=VALID_BROWSER_CONFIG.replace("10.0", "0.0"))
+    browser = provider.provide().browser
+    assert browser.launch_retry_delay_seconds == browser.extract_session_retry_delay_seconds == 0.0
+    assert browser.launch_max_attempts == 3 and browser.extract_session_max_attempts == 2
+    with pytest.raises(ValidationError):
+        BrowserSettings.parse_obj(dict(browser.dict(), unexpected_policy=1))

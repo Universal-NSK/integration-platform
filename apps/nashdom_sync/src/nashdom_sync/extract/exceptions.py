@@ -2,6 +2,10 @@ class ExtractError(Exception):
     """Ошибка этапа извлечения данных."""
 
 
+class BrowserSessionUnavailableError(ExtractError):
+    """Текущая browser/ChromeDriver session больше не пригодна для Extract."""
+
+
 class NashDomClientError(ExtractError):
     """Нарушен контракт взаимодействия с NashDom."""
 

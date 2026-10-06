@@ -2,13 +2,13 @@
 
 import logging
 from contextlib import suppress
-from time import perf_counter
+from time import perf_counter, sleep
 from typing import Optional
 
 from platform_logging import LoggingConfig, configure_logging, log_event
 from runtime_files import RuntimePaths
 
-from nashdom_sync.extract import ExtractService
+from nashdom_sync.extract import BrowserSessionUnavailableError, ExtractService
 from nashdom_sync.load import LoadIncompleteError, LoadService
 from nashdom_sync.providers.browser_provider import BrowserProvider
 from nashdom_sync.providers.crm_context_cache import CrmContextCache
@@ -111,16 +111,39 @@ class SyncOrchestrator:
             stage_started = perf_counter()
             artifacts.mark_stage(current_stage)
             emit("stage_started", stage_started)
-            driver = browser_provider.provide(settings.browser)
-            try:
-                extract_result = extract_service.extract(driver, settings.extract)
-            except BaseException:
-                # Закрытие браузера не должно подменять исходную ошибку извлечения.
-                with suppress(Exception):
+            for attempt in range(1, settings.browser.extract_session_max_attempts + 1):
+                driver = browser_provider.provide(settings.browser)
+                session_started = perf_counter()
+                try:
+                    extract_result = extract_service.extract(driver, settings.extract)
+                except BrowserSessionUnavailableError:
+                    with suppress(Exception):
+                        driver.quit()
+                    if attempt == settings.browser.extract_session_max_attempts:
+                        raise
+                    log_event(
+                        logger,
+                        logging.WARNING,
+                        "browser_session_restart",
+                        run_id=run_dir.name,
+                        stage=current_stage.value,
+                        duration_seconds=perf_counter() - session_started,
+                        attempt=attempt + 1,
+                        max_attempts=settings.browser.extract_session_max_attempts,
+                        retry_delay_seconds=settings.browser.extract_session_retry_delay_seconds,
+                        reason="browser_session_unavailable",
+                    )
+                    sleep(settings.browser.extract_session_retry_delay_seconds)
+                except BaseException:
+                    # Закрытие не подменяет исходную ошибку Extract.
+                    with suppress(Exception):
+                        driver.quit()
+                    raise
+                else:
                     driver.quit()
-                raise
+                    break
             else:
-                driver.quit()
+                raise AssertionError("Validated session attempts must be positive")
             artifacts.save_extract_result(extract_result)
             emit("stage_completed", stage_started)
 

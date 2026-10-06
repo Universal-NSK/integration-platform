@@ -1,6 +1,6 @@
 from dataclasses import replace
 from datetime import date
-from typing import Optional
+from typing import Optional, Set
 
 import pytest
 from nashdom_sync.contracts import (
@@ -73,8 +73,10 @@ def test_unexpected_region_fails() -> None:
         SourceDataValidator().validate_objects([_object(region_id=54)], {22})
 
 
-def test_empty_object_list_is_valid() -> None:
-    SourceDataValidator().validate_objects([], {22})
+def test_empty_object_list_requires_no_requested_regions() -> None:
+    SourceDataValidator().validate_objects([], set())
+    with pytest.raises(SourceDataValidationError, match="регионов: 22"):
+        SourceDataValidator().validate_objects([], {22})
 
 
 def test_exact_developer_set_is_valid() -> None:
@@ -197,3 +199,15 @@ def test_conflicting_company_groups_across_same_developer_objects_fail() -> None
             ],
             [_developer(company_group_id=5776)],
         )
+
+
+@pytest.mark.parametrize("missing", [{4}, {54, 4, 3}])
+def test_missing_regions_are_sorted(missing: Set[int]) -> None:
+    expected = ", ".join(str(code) for code in sorted(missing))
+    with pytest.raises(SourceDataValidationError) as caught:
+        SourceDataValidator().validate_objects([_object()], {22} | missing)
+    assert str(caught.value) == "NashDom не вернул объекты для запрошенных регионов: " + expected
+
+
+def test_each_region_with_one_object_is_sufficient() -> None:
+    SourceDataValidator().validate_objects([_object(1, 4), _object(2, 22)], {4, 22})

@@ -265,6 +265,7 @@ dependencies = [
     { name = "runtime-files" },
     { name = "selenium" },
     { name = "tomli" },
+    { name = "urllib3" },
 ]
 
 [package.metadata]
@@ -275,6 +276,7 @@ requires-dist = [
     { name = "runtime-files", editable = "packages/runtime_files" },
     { name = "selenium", specifier = "==4.27.1" },
     { name = "tomli", specifier = ">=2.4.1" },
+    { name = "urllib3", specifier = ">=1.26,<3" },
 ]
 
 [[package]]

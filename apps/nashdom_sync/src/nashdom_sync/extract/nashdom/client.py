@@ -1,7 +1,7 @@
 import json
 import logging
 from dataclasses import dataclass, field
-from time import sleep
+from time import perf_counter, sleep
 from typing import Any, Dict, List, Optional, Set, Tuple, cast
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
@@ -9,6 +9,7 @@ from platform_logging import log_event
 from selenium.common.exceptions import (
     ElementClickInterceptedException,
     ElementNotInteractableException,
+    InvalidSessionIdException,
     TimeoutException,
     WebDriverException,
 )
@@ -16,6 +17,13 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
+from urllib3.exceptions import (
+    HTTPError,
+    MaxRetryError,
+    NewConnectionError,
+    ProtocolError,
+    ReadTimeoutError,
+)
 
 from nashdom_sync.contracts import (
     ExtractedCompanyGroup,
@@ -25,6 +33,7 @@ from nashdom_sync.contracts import (
     NashDomRegion,
 )
 from nashdom_sync.extract.exceptions import (
+    BrowserSessionUnavailableError,
     NashDomClientError,
     NashDomUnavailableError,
 )
@@ -184,6 +193,39 @@ _SERVER_ERROR_MARKERS = (
 )
 
 
+def _raise_if_session_unavailable(exc: Exception) -> None:
+    """Classify only local driver transport and explicit dead-session failures."""
+    unavailable = False
+    if isinstance(exc, (ReadTimeoutError, MaxRetryError, NewConnectionError)):
+        transport = exc.conn if isinstance(exc, NewConnectionError) else exc.pool
+        host = getattr(transport, "host", None)
+        local = host in ("localhost", "127.0.0.1", "::1", "[::1]")
+        unavailable = local and (
+            not isinstance(exc, MaxRetryError)
+            or isinstance(exc.reason, (NewConnectionError, ReadTimeoutError, ProtocolError))
+        )
+    elif isinstance(exc, InvalidSessionIdException):
+        unavailable = True
+    elif isinstance(exc, WebDriverException) and not isinstance(exc, TimeoutException):
+        message = str(exc).lower()
+        unavailable = "net::err_" not in message and any(
+            marker in message
+            for marker in (
+                "invalid session id",
+                "chrome not reachable",
+                "disconnected",
+                "not connected to devtools",
+                "session deleted because of page crash",
+                "tab crashed",
+            )
+        )
+    if unavailable:
+        raise BrowserSessionUnavailableError("Browser/ChromeDriver session недоступна") from exc
+    if isinstance(exc, HTTPError):
+        # Non-local/unknown HTTP failures are not evidence of a dead browser.
+        raise exc
+
+
 @dataclass(frozen=True)
 class _CapturedRequest:
     request_url: str
@@ -315,7 +357,8 @@ class NashDomClient:
             )
         except TimeoutException:
             fetch_failure = "timeout"
-        except WebDriverException:
+        except (WebDriverException, HTTPError) as exc:
+            _raise_if_session_unavailable(exc)
             fetch_failure = "webdriver"
 
         if fetch_failure == "timeout":
@@ -438,7 +481,8 @@ class NashDomClient:
             )
         except TimeoutException:
             fetch_failure = "timeout"
-        except WebDriverException:
+        except (WebDriverException, HTTPError) as exc:
+            _raise_if_session_unavailable(exc)
             fetch_failure = "webdriver"
 
         if fetch_failure == "timeout":
@@ -539,7 +583,8 @@ class NashDomClient:
     def _ensure_nashdom_context(self) -> None:
         try:
             current_url = self._driver.current_url
-        except WebDriverException as exc:
+        except (WebDriverException, HTTPError) as exc:
+            _raise_if_session_unavailable(exc)
             raise NashDomClientError(
                 "Не удалось проверить browser-context перед ERZ bulk fetch"
             ) from exc
@@ -655,12 +700,16 @@ class NashDomClient:
             raise NashDomClientError(
                 f"На странице группы компаний {company_group_id} не найден __NEXT_DATA__"
             ) from exc
+        except (WebDriverException, HTTPError) as exc:
+            _raise_if_session_unavailable(exc)
+            raise NashDomClientError("Не удалось прочитать DOM NashDom") from exc
 
         try:
             raw_next_data: Optional[str] = element.get_attribute(  # pyright: ignore[reportUnknownMemberType]
                 "textContent"
             )
-        except WebDriverException as exc:
+        except (WebDriverException, HTTPError) as exc:
+            _raise_if_session_unavailable(exc)
             raise NashDomClientError(
                 f"Не удалось прочитать __NEXT_DATA__ группы компаний {company_group_id}"
             ) from exc
@@ -708,16 +757,13 @@ class NashDomClient:
                 f"detail SSR застройщика {developer_id}",
             )
 
-        if "id" in page_props_mapping:
-            page_developer_id = page_props_mapping["id"]
-            if (
-                not isinstance(page_developer_id, int)
-                or isinstance(page_developer_id, bool)
-                or page_developer_id != developer_id
-            ):
-                raise NashDomClientError(
-                    f"props.pageProps.id не соответствует запрошенному застройщику {developer_id}"
-                )
+        if "id" in page_props_mapping and not self._route_id_matches_requested(
+            page_props_mapping["id"],
+            developer_id,
+        ):
+            raise NashDomClientError(
+                f"props.pageProps.id не соответствует запрошенному застройщику {developer_id}"
+            )
 
         initial_state = props_mapping.get("initialState")
         if not isinstance(initial_state, dict):
@@ -754,7 +800,8 @@ class NashDomClient:
     def _raise_if_unavailable_developer_page(self, operation: str) -> None:
         try:
             page_text = f"{self._driver.title}\n{self._driver.page_source[:200000]}".lower()
-        except WebDriverException as exc:
+        except (WebDriverException, HTTPError) as exc:
+            _raise_if_session_unavailable(exc)
             raise NashDomClientError(
                 f"Не удалось проверить страницу NashDom во время {operation}"
             ) from exc
@@ -775,12 +822,16 @@ class NashDomClient:
             raise NashDomClientError(
                 f"На странице застройщика {developer_id} не найден __NEXT_DATA__"
             ) from exc
+        except (WebDriverException, HTTPError) as exc:
+            _raise_if_session_unavailable(exc)
+            raise NashDomClientError("Не удалось прочитать DOM NashDom") from exc
 
         try:
             raw_next_data: Optional[str] = element.get_attribute(  # pyright: ignore[reportUnknownMemberType]
                 "textContent"
             )
-        except WebDriverException as exc:
+        except (WebDriverException, HTTPError) as exc:
+            _raise_if_session_unavailable(exc)
             raise NashDomClientError(
                 f"Не удалось прочитать __NEXT_DATA__ застройщика {developer_id}"
             ) from exc
@@ -804,26 +855,36 @@ class NashDomClient:
         region: NashDomRegion,
         target_count: int,
     ) -> List[ExtractedObject]:
+        started = perf_counter()
         self._open_region(region)
         ssr_objects = self._read_ssr_objects()
-
         if len(ssr_objects) >= target_count:
-            return self._normalizer.normalize_objects(ssr_objects[:target_count])
-
-        load_more_locator = self._find_load_more_locator()
-        if load_more_locator is None:
-            return self._normalizer.normalize_objects(ssr_objects)
-
-        captured_request = self._bootstrap_api_request(load_more_locator)
-        xhr_objects = self._collect_api_objects(captured_request, target_count)
-        return self._normalizer.normalize_objects(xhr_objects)
+            raw_objects = ssr_objects[:target_count]
+        else:
+            load_more_locator = self._find_load_more_locator()
+            if load_more_locator is None:
+                raw_objects = ssr_objects
+            else:
+                captured_request = self._bootstrap_api_request(load_more_locator)
+                raw_objects = self._collect_api_objects(captured_request, target_count)
+        objects = self._normalizer.normalize_objects(raw_objects)
+        log_event(
+            logger,
+            logging.INFO,
+            "nashdom_region_extracted",
+            region_code=region.code,
+            objects_received=len(objects),
+            duration_seconds=perf_counter() - started,
+        )
+        return objects
 
     def _navigate(self, url: str, operation: str, numeric_id: Optional[int] = None) -> None:
         for attempt in range(1, self._navigation_max_attempts + 1):
             try:
                 self._driver.get(url)
                 return
-            except WebDriverException as exc:
+            except (WebDriverException, HTTPError) as exc:
+                _raise_if_session_unavailable(exc)
                 error_text = str(exc).lower()
                 if (
                     isinstance(exc, TimeoutException)
@@ -839,8 +900,8 @@ class NashDomClient:
                     ) from exc
                 try:
                     self._driver.execute_script("window.stop();")  # pyright: ignore[reportUnknownMemberType]
-                except Exception:
-                    pass
+                except Exception as stop_error:
+                    _raise_if_session_unavailable(stop_error)
                 if attempt == self._navigation_max_attempts:
                     raise NashDomUnavailableError(
                         f"NashDom не ответил: {operation} {numeric_id}; исчерпано попыток: {attempt}"
@@ -875,7 +936,8 @@ class NashDomClient:
     def _raise_if_unavailable_page(self, region_id: int) -> None:
         try:
             page_text = f"{self._driver.title}\n{self._driver.page_source[:200000]}".lower()
-        except WebDriverException as exc:
+        except (WebDriverException, HTTPError) as exc:
+            _raise_if_session_unavailable(exc)
             raise NashDomClientError("Не удалось проверить состояние страницы NashDom") from exc
 
         if any(marker in page_text for marker in _SERVER_ERROR_MARKERS):
@@ -896,12 +958,16 @@ class NashDomClient:
             raise NashDomClientError(
                 "На странице NashDom не найден ожидаемый __NEXT_DATA__"
             ) from exc
+        except (WebDriverException, HTTPError) as exc:
+            _raise_if_session_unavailable(exc)
+            raise NashDomClientError("Не удалось прочитать DOM NashDom") from exc
 
         try:
             raw_next_data: Optional[str] = element.get_attribute(  # pyright: ignore[reportUnknownMemberType]
                 "textContent"
             )
-        except WebDriverException as exc:
+        except (WebDriverException, HTTPError) as exc:
+            _raise_if_session_unavailable(exc)
             raise NashDomClientError("Не удалось прочитать __NEXT_DATA__") from exc
         if not raw_next_data:
             raise NashDomClientError("__NEXT_DATA__ найден, но не содержит данных")
@@ -948,7 +1014,8 @@ class NashDomClient:
                     return locator
             except NashDomClientError:
                 raise
-            except WebDriverException as exc:
+            except (WebDriverException, HTTPError) as exc:
+                _raise_if_session_unavailable(exc)
                 raise NashDomClientError("Не удалось найти кнопку «Показать ещё»") from exc
 
         return None
@@ -966,7 +1033,8 @@ class NashDomClient:
                     _INSTALL_INTERCEPTOR_SCRIPT
                 ),
             )
-        except WebDriverException as exc:
+        except (WebDriverException, HTTPError) as exc:
+            _raise_if_session_unavailable(exc)
             raise NashDomClientError("Не удалось установить XHR interceptor") from exc
 
         if installed is not True:
@@ -991,7 +1059,8 @@ class NashDomClient:
             raise NashDomClientError(
                 "Кнопка «Показать ещё» найдена, но не стала доступна для клика"
             ) from exc
-        except WebDriverException as exc:
+        except (WebDriverException, HTTPError) as exc:
+            _raise_if_session_unavailable(exc)
             raise NashDomClientError("Не удалось нажать кнопку «Показать ещё»") from exc
 
     def _wait_for_captured_request(self) -> _CapturedRequest:
@@ -1024,7 +1093,8 @@ class NashDomClient:
             raise NashDomClientError(
                 "Кнопка «Показать ещё» нажата, но ожидаемый XHR не был получен"
             ) from exc
-        except WebDriverException as exc:
+        except (WebDriverException, HTTPError) as exc:
+            _raise_if_session_unavailable(exc)
             raise NashDomClientError("Не удалось прочитать перехваченный XHR") from exc
 
         if not isinstance(raw_request_value, dict):
@@ -1108,7 +1178,8 @@ class NashDomClient:
             )
         except TimeoutException:
             fetch_failure = "timeout"
-        except WebDriverException:
+        except (WebDriverException, HTTPError) as exc:
+            _raise_if_session_unavailable(exc)
             fetch_failure = "webdriver"
 
         if fetch_failure == "timeout":

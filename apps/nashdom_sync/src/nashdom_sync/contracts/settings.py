@@ -35,6 +35,22 @@ class BrowserSettings(_StrictSettingsModel):
     disable_images: StrictBool
     window_width: StrictInt
     window_height: StrictInt
+    launch_max_attempts: StrictInt
+    launch_retry_delay_seconds: StrictFloat
+    extract_session_max_attempts: StrictInt
+    extract_session_retry_delay_seconds: StrictFloat
+
+    @validator("launch_max_attempts", "extract_session_max_attempts")  # pyright: ignore[reportUntypedFunctionDecorator]
+    def _positive_attempts(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("attempts must be positive")
+        return value
+
+    @validator("launch_retry_delay_seconds", "extract_session_retry_delay_seconds")  # pyright: ignore[reportUntypedFunctionDecorator]
+    def _nonnegative_delay(cls, value: float) -> float:
+        if not value >= 0 or value == float("inf"):
+            raise ValueError("delay must be finite and nonnegative")
+        return value
 
     @validator(
         "page_load_timeout_seconds", "script_timeout_seconds", "window_width", "window_height"
