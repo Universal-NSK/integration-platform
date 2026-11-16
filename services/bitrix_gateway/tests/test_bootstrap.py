@@ -29,7 +29,7 @@ def test_build_rate_limiter() -> None:
 
     async def scenario() -> float:
         rate_limiter = build_rate_limiter(settings)
-        return rate_limiter.get_min_interval
+        return rate_limiter.min_interval
 
     assert asyncio.run(scenario()) == 0.5
 

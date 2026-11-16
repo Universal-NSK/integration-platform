@@ -19,7 +19,7 @@ class RateLimiter:
         self._last_start_ts = 0.0
 
     @property
-    def get_min_interval(self) -> float:
+    def min_interval(self) -> float:
         """Вернуть настроенный минимальный интервал в секундах."""
 
         return self._min_interval
