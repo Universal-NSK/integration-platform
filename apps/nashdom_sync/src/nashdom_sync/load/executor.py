@@ -2,12 +2,22 @@
 
 import logging
 from time import perf_counter
-from typing import Dict
+from typing import Dict, Mapping, Tuple
 
 from platform_logging import log_event
 
-from nashdom_sync.bitrix_crm import BitrixRequestFailedError, BitrixRequestUnknownError
-from nashdom_sync.contracts import LoadResult, OperationResult, OperationStatus, SyncPlan
+from nashdom_sync.bitrix_crm import (
+    BitrixGatewayError,
+    BitrixRequestFailedError,
+    BitrixRequestUnknownError,
+)
+from nashdom_sync.contracts import (
+    LoadResult,
+    OperationResult,
+    OperationStatus,
+    PlannedOperation,
+    SyncPlan,
+)
 
 from .binding_resolver import RuntimeBindingResolver
 from .command_executor import CrmCommandExecutor
@@ -31,22 +41,7 @@ class SyncPlanExecutor:
             command_type = type(operation.command).__name__
             if operation_id in results:
                 raise LoadInvariantError(f"Повторяющийся ID операции {operation_id}")
-            dependencies = tuple(
-                dict.fromkeys(
-                    operation.dependencies
-                    + tuple(b.source_operation_id for b in operation.bindings)
-                )
-            )
-            for dependency in dependencies:
-                if dependency not in results:
-                    raise LoadInvariantError(
-                        f"Операция {operation_id} ссылается на отсутствующий результат {dependency}"
-                    )
-            blockers = tuple(
-                dependency
-                for dependency in dependencies
-                if results[dependency].status is not OperationStatus.SUCCESS
-            )
+            blockers = self._find_blockers(operation, results)
             if blockers:
                 result = OperationResult(operation_id, OperationStatus.BLOCKED, blocked_by=blockers)
                 event = "load_operation_blocked"
@@ -61,18 +56,12 @@ class SyncPlanExecutor:
                 )
                 try:
                     crm_id = self._command_executor.execute(command)
-                except (BitrixRequestFailedError, BitrixRequestUnknownError) as exc:
-                    status = (
-                        OperationStatus.FAILED
-                        if isinstance(exc, BitrixRequestFailedError)
-                        else OperationStatus.UNKNOWN
+                except _ERROR_STATUSES as exc:
+                    result = OperationResult(
+                        operation_id,
+                        _status_for(exc),
+                        error_type=type(exc).__name__,
                     )
-                    error_type = (
-                        "BitrixRequestFailedError"
-                        if status is OperationStatus.FAILED
-                        else "BitrixRequestUnknownError"
-                    )
-                    result = OperationResult(operation_id, status, error_type=error_type)
                     event = "load_operation_failed"
                 else:
                     result = OperationResult(operation_id, OperationStatus.SUCCESS, crm_id=crm_id)
@@ -89,3 +78,44 @@ class SyncPlanExecutor:
                 duration_seconds=perf_counter() - started,
             )
         return LoadResult(tuple(results.values()))
+
+    @staticmethod
+    def _dependency_ids(operation: PlannedOperation) -> Tuple[str, ...]:
+        """Явные зависимости и источники runtime-связей без повторов, в порядке появления."""
+        return tuple(
+            dict.fromkeys(
+                operation.dependencies + tuple(b.source_operation_id for b in operation.bindings)
+            )
+        )
+
+    @classmethod
+    def _find_blockers(
+        cls, operation: PlannedOperation, results: Mapping[str, OperationResult]
+    ) -> Tuple[str, ...]:
+        """Непосредственные зависимости, завершившиеся не SUCCESS.
+
+        Зависимость без результата нарушает порядок плана и прерывает загрузку.
+        """
+        dependencies = cls._dependency_ids(operation)
+        for dependency in dependencies:
+            if dependency not in results:
+                raise LoadInvariantError(
+                    f"Операция {operation.operation_id} ссылается "
+                    f"на отсутствующий результат {dependency}"
+                )
+        return tuple(
+            dependency
+            for dependency in dependencies
+            if results[dependency].status is not OperationStatus.SUCCESS
+        )
+
+
+# Ошибки записи, после которых загрузка продолжается. BitrixGatewayError (504, обрыв,
+# невалидный ответ) — исход записи неизвестен, поэтому UNKNOWN, как и BitrixRequestUnknownError.
+_ERROR_STATUSES = (BitrixRequestFailedError, BitrixRequestUnknownError, BitrixGatewayError)
+
+
+def _status_for(error: Exception) -> OperationStatus:
+    if isinstance(error, BitrixRequestFailedError):
+        return OperationStatus.FAILED
+    return OperationStatus.UNKNOWN

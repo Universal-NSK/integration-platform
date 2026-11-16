@@ -599,31 +599,34 @@ def test_orchestrator_with_real_load_and_fake_crm(
         run.execute()
         assert run.manifest()["status"] == "COMPLETED"
     else:
-        expected = LoadIncompleteError if outcome == "partial" else BitrixGatewayError
-        with pytest.raises(expected) as caught:
+        with pytest.raises(LoadIncompleteError) as caught:
             run.execute()
         assert_failed(run, "LOAD", caught.value)
-        assert secret not in str(caught.value) if outcome == "partial" else True
+        assert secret not in str(caught.value)
     assert run.manifest()["stage"] == "LOAD"
     assert secret not in run.log()
     client.close.assert_called_once_with()
+    saved = RunArtifactStore(run.directory, Mock()).load_load_result()
+    assert tuple(r.operation_id for r in saved.operations) == tuple(
+        op.operation_id for op in plan.operations
+    )
+    assert saved.is_successful is (outcome in ("empty", "success"))
+    if outcome in ("partial", "infrastructure"):
+        assert saved.operations[1].blocked_by == ("first",)
+        assert client.add_item.call_count == 2
     if outcome == "infrastructure":
-        assert not (run.directory / "load_result.json").exists()
-        client.add_item.assert_called_once()
-    else:
-        saved = RunArtifactStore(run.directory, Mock()).load_load_result()
-        assert tuple(r.operation_id for r in saved.operations) == tuple(
-            op.operation_id for op in plan.operations
-        )
-        assert saved.is_successful is (outcome != "partial")
-        if outcome == "partial":
-            assert saved.operations[1].blocked_by == ("first",)
-            assert client.add_item.call_count == 2
-        elif outcome == "empty":
-            client.add_item.assert_not_called()
-        else:
-            assert saved.operations[1].crm_id == 202
-            assert client.add_item.call_args_list[1].args == (4, {"TITLE": secret, "OWNER": 101})
+        # Исход записи при сбое Gateway неизвестен: UNKNOWN, загрузка продолжается
+        assert [r.status for r in saved.operations] == [
+            OperationStatus.UNKNOWN,
+            OperationStatus.BLOCKED,
+            OperationStatus.UNKNOWN,
+        ]
+        assert saved.operations[0].error_type == "BitrixGatewayError"
+    elif outcome == "empty":
+        client.add_item.assert_not_called()
+    elif outcome == "success":
+        assert saved.operations[1].crm_id == 202
+        assert client.add_item.call_args_list[1].args == (4, {"TITLE": secret, "OWNER": 101})
 
 
 def test_load_result_save_failure_takes_priority_over_partial_result(

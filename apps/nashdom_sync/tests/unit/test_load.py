@@ -163,6 +163,7 @@ def test_execute_order_resolved_ids_and_address_success() -> None:
     [
         (BitrixRequestFailedError("секрет"), OperationStatus.FAILED),
         (BitrixRequestUnknownError("секрет"), OperationStatus.UNKNOWN),
+        (BitrixGatewayError("секрет"), OperationStatus.UNKNOWN),
     ],
 )
 def test_failed_branches_block_only_direct_dependencies(
@@ -211,7 +212,6 @@ def test_failed_branches_block_only_direct_dependencies(
 @pytest.mark.parametrize(
     "error",
     [
-        BitrixGatewayError("секрет"),
         RuntimeError("секрет"),
         LoadInvariantError("Ошибка контракта"),
     ],
